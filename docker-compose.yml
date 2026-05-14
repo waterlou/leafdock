@@ -1,0 +1,25 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - app_data:/data
+    restart: unless-stopped
+
+  management-api:
+    build: .
+    environment:
+      - MANAGEMENT_API_KEY=${MANAGEMENT_API_KEY:-change-me}
+      - PORT=3001
+      - DATA_DIR=/data
+      - CADDY_ADMIN_URL=http://caddy:2019
+      - DOCKER_SOCKET=/var/run/docker.sock
+    volumes:
+      - app_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+volumes:
+  app_data:

@@ -1,0 +1,17 @@
+{
+    admin 0.0.0.0:2019
+}
+
+:80 {
+    # Management API
+    handle /api/* {
+        reverse_proxy management-api:3001
+    }
+
+    # Landing page
+    handle {
+        file_server {
+            root /data/landing
+        }
+    }
+}
