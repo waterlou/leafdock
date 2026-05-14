@@ -2,7 +2,7 @@
     admin 0.0.0.0:2019
 }
 
-:80 {
+:{$HTTP_PORT:80} {
     # Management API
     handle /api/* {
         reverse_proxy management-api:3001
