@@ -43,15 +43,15 @@ function ensureLandingPage(): void {
   .error-detail { margin-top: 24px; padding: 16px; background: #21262d; border-radius: 8px; font-family: monospace; font-size: 13px; color: #8b949e; }
   .error-detail strong { color: #f85149; }
   .loading { color: #8b949e; }
-  .sort-bar { margin-bottom: 16px; font-size: 13px; color: #8b949e; }
-  .sort-btn { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-left: 6px; }
-  .sort-btn:hover { background: #30363d; }
-  .sort-btn.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  .loading { color: #8b949e; }
+  .title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .title-row select { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+  .title-row select:focus { outline: none; border-color: #1f6feb; }
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>Intranet Host</h1>
+  <div class="title-row"><h1>Intranet Host</h1><select id="sort-select"><option value="date">Date</option><option value="name">Name</option></select></div>
   <p>Your apps are listed below.</p>
   <div id="app-list" class="loading">Loading apps...</div>
 </div>
@@ -75,22 +75,15 @@ fetch('/api/v1/apps', { headers: { 'Authorization': 'Bearer ' + (localStorage.ge
       list.innerHTML = '<div class="empty">No apps deployed yet.</div>';
       return;
     }
-    list.innerHTML =
-      '<div class="sort-bar">Sort by: ' +
-      '<button class="sort-btn" data-sort="name">Name</button>' +
-      '<button class="sort-btn active" data-sort="date">Date</button>' +
-      '</div><div id="app-list-items"></div>';
+    list.innerHTML = '<div id="app-list-items"></div>';
+    var select = document.getElementById('sort-select');
+    select.style.display = '';
     var items = document.getElementById('app-list-items');
-    var sort = 'date';
+    var sort = select.value; // 'date' is default
     renderApps(items, data.apps, sort);
-    list.querySelectorAll('.sort-btn').forEach(function(btn) {
-      btn.onclick = function() {
-        list.querySelectorAll('.sort-btn').forEach(function(b) { b.classList.remove('active'); });
-        btn.classList.add('active');
-        sort = btn.getAttribute('data-sort');
-        renderApps(items, data.apps, sort);
-      };
-    });
+    select.onchange = function() {
+      renderApps(items, data.apps, select.value);
+    };
   })
   .catch(e => {
     const list = document.getElementById('app-list');
