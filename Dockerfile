@@ -4,11 +4,13 @@ ARG TARGETARCH
 
 RUN apk add --no-cache docker-cli docker-cli-compose curl && \
     if [ "$TARGETARCH" = "arm64" ]; then \
-        CADDY_ARCH=arm64; \
+        CADDY_FILTER=linux_arm64.tar.gz; \
     else \
-        CADDY_ARCH=amd64; \
+        CADDY_FILTER=linux_amd64.tar.gz; \
     fi && \
-    curl -fsSL "https://github.com/caddyserver/caddy/releases/latest/download/caddy_linux_${CADDY_ARCH}.tar.gz" -o /tmp/caddy.tar.gz && \
+    CADDY_URL=$(curl -fsSL "https://api.github.com/repos/caddyserver/caddy/releases/latest" \
+      | grep browser_download_url | grep "$CADDY_FILTER" | cut -d'"' -f4 | head -1) && \
+    curl -fsSL "$CADDY_URL" -o /tmp/caddy.tar.gz && \
     tar xzf /tmp/caddy.tar.gz -C /usr/local/bin caddy && \
     rm /tmp/caddy.tar.gz && \
     apk del curl
