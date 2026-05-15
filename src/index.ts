@@ -24,29 +24,32 @@ function ensureLandingPage(): void {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Intranet Host</title>
 <style>
+  :root { --bg: #0d1117; --fg: #c9d1d9; --card-bg: #161b22; --card-border: #30363d; --link: #58a6ff; --muted: #8b949e; --hover: #1c2128; --tag-bg: #21262d; --green: #3fb950; --yellow: #d29922; --red: #f85149; --select-bg: #21262d; --select-border: #30363d; --err-bg: #21262d; }
+  .light { --bg: #f6f8fa; --fg: #24292f; --card-bg: #ffffff; --card-border: #d0d7de; --link: #0969da; --muted: #656d76; --hover: #f3f4f6; --tag-bg: #e8eaed; --green: #1a7f37; --yellow: #9a6700; --red: #cf222e; --select-bg: #f6f8fa; --select-border: #d0d7de; --err-bg: #f6f8fa; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; }
-  .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 40px; max-width: 600px; width: 100%; text-align: center; }
-  h1 { color: #58a6ff; font-size: 24px; margin-bottom: 8px; }
-  p { color: #8b949e; font-size: 14px; margin-bottom: 24px; }
-  .apps { list-style: none; text-align: left; }
-  .apps li { padding: 12px 16px; border: 1px solid #30363d; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
-  .apps li:hover { background: #1c2128; }
-  .app-name { color: #58a6ff; font-weight: 600; text-decoration: none; }
-  .app-name:hover { text-decoration: underline; }
-  .app-type { color: #8b949e; font-size: 12px; background: #21262d; padding: 2px 8px; border-radius: 4px; }
-  .status { font-size: 12px; }
-  .status.running { color: #3fb950; }
-  .status.stopped { color: #d29922; }
-  .status.error { color: #f85149; }
-  .empty { color: #8b949e; font-style: italic; padding: 20px; }
-  .error-detail { margin-top: 24px; padding: 16px; background: #21262d; border-radius: 8px; font-family: monospace; font-size: 13px; color: #8b949e; }
-  .error-detail strong { color: #f85149; }
-  .loading { color: #8b949e; }
-  .loading { color: #8b949e; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--fg); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; }
+  .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 40px; max-width: 600px; width: 100%; text-align: center; }
+  h1 { color: var(--link); font-size: 24px; }
   .title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
-  .title-row select { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; }
-  .title-row select:focus { outline: none; border-color: #1f6feb; }
+  .title-row select { background: var(--select-bg); border: 1px solid var(--select-border); color: var(--fg); padding: 4px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+  .title-row select:focus { outline: none; border-color: var(--link); }
+  p { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+  .apps { list-style: none; text-align: left; }
+  .apps li { padding: 12px 16px; border: 1px solid var(--card-border); border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+  .apps li:hover { background: var(--hover); }
+  .app-name { color: var(--link); font-weight: 600; text-decoration: none; }
+  .app-name:hover { text-decoration: underline; }
+  .app-type { color: var(--muted); font-size: 12px; background: var(--tag-bg); padding: 2px 8px; border-radius: 4px; }
+  .status { font-size: 12px; }
+  .status.running { color: var(--green); }
+  .status.stopped { color: var(--yellow); }
+  .status.error { color: var(--red); }
+  .empty { color: var(--muted); font-style: italic; padding: 20px; }
+  .error-detail { margin-top: 24px; padding: 16px; background: var(--err-bg); border-radius: 8px; font-family: monospace; font-size: 13px; color: var(--muted); }
+  .error-detail strong { color: var(--red); }
+  .loading { color: var(--muted); }
+  .theme-toggle { margin-top: 24px; background: var(--card-bg); border: 1px solid var(--card-border); color: var(--muted); padding: 6px 16px; border-radius: 20px; font-size: 13px; cursor: pointer; }
+  .theme-toggle:hover { color: var(--fg); border-color: var(--link); }
 </style>
 </head>
 <body>
@@ -55,7 +58,12 @@ function ensureLandingPage(): void {
   <p>Your apps are listed below.</p>
   <div id="app-list" class="loading">Loading apps...</div>
 </div>
+<button class="theme-toggle" id="theme-toggle">Switch to Light</button>
 <script>
+(function() {
+  var t = localStorage.getItem('theme');
+  if (t === 'light') { document.body.classList.add('light'); document.getElementById('theme-toggle').textContent = 'Switch to Dark'; }
+})();
 function renderApps(container, apps, sortBy) {
   var sorted = apps.slice().sort(function(a, b) {
     if (sortBy === 'name') return a.name.localeCompare(b.name);
@@ -66,7 +74,12 @@ function renderApps(container, apps, sortBy) {
       '<span><span class="app-type">' + a.type + '</span> <span class="status ' + a.status + '">' + a.status + '</span></span></li>';
   }).join('') + '</ul>';
 }
-
+document.getElementById('theme-toggle').onclick = function() {
+  document.body.classList.toggle('light');
+  var isLight = document.body.classList.contains('light');
+  localStorage.setItem('theme', isLight ? 'light' : 'dark');
+  this.textContent = isLight ? 'Switch to Dark' : 'Switch to Light';
+};
 fetch('/api/v1/apps', { headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('apiKey') || '') } })
   .then(function(r) { if (r.status === 401) throw new Error('auth'); return r.json(); })
   .then(function(data) {
@@ -76,27 +89,23 @@ fetch('/api/v1/apps', { headers: { 'Authorization': 'Bearer ' + (localStorage.ge
       return;
     }
     list.innerHTML = '<div id="app-list-items"></div>';
-    var select = document.getElementById('sort-select');
-    select.style.display = '';
     var items = document.getElementById('app-list-items');
-    var sort = select.value; // 'date' is default
+    var select = document.getElementById('sort-select');
+    var sort = select.value;
     renderApps(items, data.apps, sort);
-    select.onchange = function() {
-      renderApps(items, data.apps, select.value);
-    };
+    select.onchange = function() { renderApps(items, data.apps, select.value); };
   })
-  .catch(e => {
-    const list = document.getElementById('app-list');
+  .catch(function(e) {
+    var list = document.getElementById('app-list');
     if (e.message === 'auth') {
-      list.innerHTML = '<div class="error-detail"><strong>Unauthorized</strong> — <a href="#" onclick="const k=prompt(\\'Enter API key:\\');if(k){localStorage.setItem(\\'apiKey\\',k);location.reload()}return false" style="color:#58a6ff">set API key</a></div>';
+      list.innerHTML = '<div class="error-detail"><strong>Unauthorized</strong> &mdash; <a href="#" onclick="const k=prompt(\\'Enter API key:\\');if(k){localStorage.setItem(\\'apiKey\\',k);location.reload()}return false" style="color:var(--link)">set API key</a></div>';
     } else {
       list.innerHTML = '<div class="error-detail">Could not load apps. <strong>' + e.message + '</strong></div>';
     }
   });
 </script>
 </body>
-</html>
-`, 'utf-8');
+</html>`, 'utf-8');
 }
 
 async function main() {
