@@ -88,18 +88,28 @@ export async function addDockerRoute(prefix: string, containerName: string, port
 
   const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== routeId + '-root');
 
-  const route: CaddyRoute = {
-    '@id': routeId,
-    match: [{ path: [prefix, `${prefix}/*`] }],
-    handle: [
-      {
-        handler: 'reverse_proxy',
-        upstreams: [{ dial: `${containerName}:${port}` }],
-      },
-    ],
+  // Redirect exact prefix to prefix/ so relative URLs in HTML resolve correctly
+  const redirectRoute: CaddyRoute = {
+    '@id': routeId + '-root',
+    match: [{ path: [prefix] }],
+    handle: [{
+      handler: 'static_response',
+      status_code: 308,
+      headers: { Location: [prefix + '/'] },
+    }],
   };
 
-  filtered.unshift(route);
+  // Subroute strips the prefix before forwarding to the container
+  const serveRoute: CaddyRoute = {
+    '@id': routeId,
+    match: [{ path: [`${prefix}/*`] }],
+    handle: [{ handler: 'subroute', routes: [
+      { handle: [{ handler: 'rewrite', strip_path_prefix: prefix }] },
+      { handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `${containerName}:${port}` }] }] },
+    ]}],
+  };
+
+  filtered.unshift(serveRoute, redirectRoute);
   await setRoutes(filtered);
 }
 
