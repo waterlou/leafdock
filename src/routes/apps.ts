@@ -157,6 +157,26 @@ router.post('/:name/restart', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/v1/apps/:name/stop
+router.post('/:name/stop', async (req: Request, res: Response) => {
+  try {
+    const app = await apps.stopApp(param(req, 'name'));
+    res.json(app);
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// POST /api/v1/apps/:name/start
+router.post('/:name/start', async (req: Request, res: Response) => {
+  try {
+    const app = await apps.startApp(param(req, 'name'));
+    res.json(app);
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
 function handleError(res: Response, err: unknown): void {
   if (err instanceof apps.ValidationError) {
     // Check if it's a "not found" or "already exists" style message

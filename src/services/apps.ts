@@ -463,6 +463,56 @@ export async function restartApp(name: string): Promise<AppOutput> {
   return rowToOutput(db.getApp(name)!);
 }
 
+export async function stopApp(name: string): Promise<AppOutput> {
+  const existing = db.getApp(name);
+  if (!existing) throw new ValidationError(`App "${name}" not found`);
+  if (existing.status === 'stopped') return rowToOutput(existing);
+
+  // Remove Caddy route
+  try {
+    await caddy.removeRoute(existing.prefix);
+  } catch {
+    // Route might not exist
+  }
+
+  // Stop docker container if applicable
+  if (existing.type === 'docker') {
+    try {
+      await docker.stopContainer(name);
+    } catch {
+      // Container might already be gone
+    }
+  }
+
+  const now = new Date().toISOString();
+  db.updateApp(name, { status: 'stopped', updated_at: now });
+  return rowToOutput(db.getApp(name)!);
+}
+
+export async function startApp(name: string): Promise<AppOutput> {
+  const existing = db.getApp(name);
+  if (!existing) throw new ValidationError(`App "${name}" not found`);
+  if (existing.status === 'running') return rowToOutput(existing);
+
+  const config = { ...getDefaultConfig(existing.type), ...JSON.parse(existing.config) };
+  const now = new Date().toISOString();
+  const updates: Parameters<typeof db.updateApp>[1] = { status: 'running', config: JSON.stringify(config), updated_at: now };
+
+  if (existing.type === 'docker') {
+    const dockerConfig = config as DockerAppConfig;
+    await docker.pullImage(dockerConfig.image);
+    const containerId = await docker.createContainer(name, appDir(name), dockerConfig);
+    await caddy.addDockerRoute(existing.prefix, containerId, dockerConfig.port);
+    updates.container_id = containerId;
+  } else {
+    const staticConfig = config as StaticAppConfig;
+    await caddy.addStaticRoute(existing.prefix, appDir(name), staticConfig.spa, staticConfig.index);
+  }
+
+  db.updateApp(name, updates);
+  return rowToOutput(db.getApp(name)!);
+}
+
 export async function syncRoutes(): Promise<void> {
   // Wait for Caddy admin API to be ready
   for (let i = 0; i < 30; i++) {
