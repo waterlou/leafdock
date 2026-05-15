@@ -16,7 +16,6 @@ function ensureLandingPage(): void {
   fs.mkdirSync(landingDir, { recursive: true });
 
   const indexPath = path.join(landingDir, 'index.html');
-  if (fs.existsSync(indexPath)) return;
 
   fs.writeFileSync(indexPath, `<!DOCTYPE html>
 <html lang="en">
@@ -44,6 +43,10 @@ function ensureLandingPage(): void {
   .error-detail { margin-top: 24px; padding: 16px; background: #21262d; border-radius: 8px; font-family: monospace; font-size: 13px; color: #8b949e; }
   .error-detail strong { color: #f85149; }
   .loading { color: #8b949e; }
+  .sort-bar { margin-bottom: 16px; font-size: 13px; color: #8b949e; }
+  .sort-btn { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-left: 6px; }
+  .sort-btn:hover { background: #30363d; }
+  .sort-btn.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 </style>
 </head>
 <body>
@@ -53,18 +56,41 @@ function ensureLandingPage(): void {
   <div id="app-list" class="loading">Loading apps...</div>
 </div>
 <script>
+function renderApps(container, apps, sortBy) {
+  var sorted = apps.slice().sort(function(a, b) {
+    if (sortBy === 'name') return a.name.localeCompare(b.name);
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
+  container.innerHTML = '<ul class="apps">' + sorted.map(function(a) {
+    return '<li><a href="' + a.prefix + '/" class="app-name">' + a.name + '</a>' +
+      '<span><span class="app-type">' + a.type + '</span> <span class="status ' + a.status + '">' + a.status + '</span></span></li>';
+  }).join('') + '</ul>';
+}
+
 fetch('/api/v1/apps', { headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('apiKey') || '') } })
-  .then(r => { if (r.status === 401) throw new Error('auth'); return r.json(); })
-  .then(data => {
-    const list = document.getElementById('app-list');
+  .then(function(r) { if (r.status === 401) throw new Error('auth'); return r.json(); })
+  .then(function(data) {
+    var list = document.getElementById('app-list');
     if (!data.apps || data.apps.length === 0) {
       list.innerHTML = '<div class="empty">No apps deployed yet.</div>';
       return;
     }
-    list.innerHTML = '<ul class="apps">' + data.apps.map(a =>
-      '<li><a href="' + a.prefix + '/" class="app-name">' + a.name + '</a>' +
-      '<span><span class="app-type">' + a.type + '</span> <span class="status ' + a.status + '">' + a.status + '</span></span></li>'
-    ).join('') + '</ul>';
+    list.innerHTML =
+      '<div class="sort-bar">Sort by: ' +
+      '<button class="sort-btn" data-sort="name">Name</button>' +
+      '<button class="sort-btn active" data-sort="date">Date</button>' +
+      '</div><div id="app-list-items"></div>';
+    var items = document.getElementById('app-list-items');
+    var sort = 'date';
+    renderApps(items, data.apps, sort);
+    list.querySelectorAll('.sort-btn').forEach(function(btn) {
+      btn.onclick = function() {
+        list.querySelectorAll('.sort-btn').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        sort = btn.getAttribute('data-sort');
+        renderApps(items, data.apps, sort);
+      };
+    });
   })
   .catch(e => {
     const list = document.getElementById('app-list');
