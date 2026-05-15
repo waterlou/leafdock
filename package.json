@@ -8,15 +8,19 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
+    "adm-zip": "^0.5.17",
     "cors": "^2.8.5",
     "dockerode": "^4.0.4",
     "express": "^4.21.0",
+    "multer": "^2.1.1",
     "sql.js": "^1.12.0"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/cors": "^2.8.17",
     "@types/dockerode": "^3.3.35",
     "@types/express": "^5.0.0",
+    "@types/multer": "^2.1.0",
     "@types/sql.js": "^1.4.11",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"

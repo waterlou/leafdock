@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import AdmZip from 'adm-zip';
 import * as db from '../db';
 import * as caddy from './caddy';
 import * as docker from './docker';
@@ -219,6 +220,113 @@ export async function createApp(input: AppInput): Promise<AppOutput> {
 
   db.createApp(row);
   return rowToOutput(db.getApp(input.name)!);
+}
+
+export async function createAppFromZip(
+  name: string,
+  type: 'static' | 'docker',
+  zipPath: string,
+  appConfig?: AppConfig
+): Promise<AppOutput> {
+  validateName(name);
+
+  const prefix = prefixFromName(name);
+
+  if (db.appExists(name)) {
+    throw new ValidationError(`App "${name}" already exists`);
+  }
+
+  if (db.prefixExists(prefix)) {
+    throw new ValidationError(`Prefix "${prefix}" is already in use`);
+  }
+
+  // Extract zip to app directory
+  const dir = appDir(name);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+
+  const zip = new AdmZip(zipPath);
+  zip.extractAllTo(dir, true);
+  fs.rmSync(zipPath, { force: true });
+
+  const now = new Date().toISOString();
+  const config: AppConfig = { ...getDefaultConfig(type), ...appConfig };
+
+  let containerId: string | null = null;
+
+  try {
+    if (type === 'docker') {
+      const dockerConfig = config as DockerAppConfig;
+      await docker.pullImage(dockerConfig.image);
+      containerId = await docker.createContainer(name, dir, dockerConfig);
+      await caddy.addDockerRoute(prefix, containerId, dockerConfig.port);
+    } else {
+      const staticConfig = config as StaticAppConfig;
+      await caddy.addStaticRoute(prefix, dir, staticConfig.spa, staticConfig.index);
+    }
+  } catch (err) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+
+  const row: db.AppRow = {
+    name,
+    type,
+    prefix,
+    status: 'running',
+    config: JSON.stringify(config),
+    container_id: containerId,
+    created_at: now,
+    updated_at: now,
+  };
+
+  db.createApp(row);
+  return rowToOutput(db.getApp(name)!);
+}
+
+export async function updateAppFromZip(
+  name: string,
+  zipPath: string,
+  appConfig?: AppConfig
+): Promise<AppOutput> {
+  const existing = db.getApp(name);
+  if (!existing) throw new ValidationError(`App "${name}" not found`);
+
+  // Remove existing files and extract zip
+  const dir = appDir(name);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+
+  const zip = new AdmZip(zipPath);
+  zip.extractAllTo(dir, true);
+  fs.rmSync(zipPath, { force: true });
+
+  const now = new Date().toISOString();
+  const updates: Parameters<typeof db.updateApp>[1] = { updated_at: now };
+
+  if (appConfig) {
+    updates.config = JSON.stringify(appConfig);
+  }
+
+  // Refresh Caddy route
+  const prefix = existing.prefix;
+  await caddy.removeRoute(prefix);
+
+  if (existing.type === 'docker') {
+    const dockerConfig = (appConfig ? appConfig : JSON.parse(existing.config)) as DockerAppConfig;
+    const containerName = docker.containerNameForApp(existing.name);
+    await docker.stopContainer(name);
+    await docker.pullImage(dockerConfig.image);
+    const containerId = await docker.createContainer(name, dir, dockerConfig);
+    await caddy.addDockerRoute(prefix, containerId, dockerConfig.port);
+    updates.container_id = containerId;
+  } else {
+    const staticConfig = (appConfig ? appConfig : JSON.parse(existing.config)) as StaticAppConfig;
+    await caddy.addStaticRoute(prefix, dir, staticConfig.spa, staticConfig.index);
+  }
+
+  db.updateApp(name, updates);
+  return rowToOutput(db.getApp(name)!);
 }
 
 export async function updateApp(name: string, input: Partial<AppInput>): Promise<AppOutput> {

@@ -42,7 +42,7 @@ export async function addStaticRoute(prefix: string, appDir: string, spa: boolea
   const routes = await getRoutes();
   const routeId = `app-${prefix.replace(/^\//, '').replace(/\//g, '-')}`;
 
-  const filtered = routes.filter(r => r['@id'] !== routeId);
+  const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== routeId + '-root');
 
   // Redirect exact prefix to prefix/ so relative URLs in HTML resolve correctly
   const redirectRoute: CaddyRoute = {
@@ -86,7 +86,7 @@ export async function addDockerRoute(prefix: string, containerName: string, port
   const routes = await getRoutes();
   const routeId = `app-${prefix.replace(/^\//, '').replace(/\//g, '-')}`;
 
-  const filtered = routes.filter(r => r['@id'] !== routeId);
+  const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== routeId + '-root');
 
   const route: CaddyRoute = {
     '@id': routeId,
@@ -106,6 +106,6 @@ export async function addDockerRoute(prefix: string, containerName: string, port
 export async function removeRoute(prefix: string): Promise<void> {
   const routes = await getRoutes();
   const routeId = `app-${prefix.replace(/^\//, '').replace(/\//g, '-')}`;
-  const filtered = routes.filter(r => r['@id'] !== routeId);
+  const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== routeId + '-root');
   await setRoutes(filtered);
 }

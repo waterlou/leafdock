@@ -116,6 +116,83 @@ Register a new app. The request includes the app name, type, all source files, a
 
 ---
 
+### Create App (Zip Upload)
+
+```
+POST /apps/upload
+```
+
+Create a new app by uploading a zip file. The zip is extracted to the app's directory. Use this for apps with binary files (images, fonts, videos) to avoid base64 encoding.
+
+**Request:** `multipart/form-data`
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `file` | yes | `.zip` file containing the app's source files |
+| `config` | yes | JSON string with app configuration (`name`, `type`, and optional `config` object) |
+
+The `config` field is a text field containing a JSON object:
+
+```json
+{
+  "name": "photo-gallery",
+  "type": "static",
+  "config": {
+    "index": "index.html",
+    "spa": true
+  }
+}
+```
+
+The config JSON supports the same fields as the JSON Create App endpoint, except `files` (they come from the zip) and `prefix` (auto-derived from name).
+
+**Response 201:** Full app object (same shape as JSON create).
+
+**Errors:**
+- `409` — App name already exists
+- `400` — Missing name/type in config, invalid name, or no zip file
+
+**cURL example:**
+```bash
+curl -X POST https://nas.ts.net/api/v1/apps/upload \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "file=@app.zip" \
+  -F 'config={"name":"photo-gallery","type":"static","config":{"spa":true}}'
+```
+
+---
+
+### Update App (Zip Upload)
+
+```
+PUT /apps/:name/upload
+```
+
+Replace an existing app's files by uploading a new zip. Optionally update the config.
+
+**Request:** `multipart/form-data`
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `file` | yes | `.zip` file containing the updated source files |
+| `config` | no | Optional JSON string with updated configuration |
+
+**Response 200:** Updated app object.
+
+**Errors:**
+- `404` — App not found
+- `400` — No zip file
+
+**cURL example:**
+```bash
+curl -X PUT https://nas.ts.net/api/v1/apps/photo-gallery/upload \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "file=@updated-app.zip" \
+  -F 'config={"config":{"index":"index.html","spa":false}}'
+```
+
+---
+
 ### Get App
 
 ```

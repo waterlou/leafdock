@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import * as apps from '../services/apps';
+import { uploadMiddleware } from '../middleware/upload';
 
 const router = Router();
 
@@ -17,11 +18,64 @@ router.get('/', (_req: Request, res: Response) => {
   }
 });
 
-// POST /api/v1/apps
+// POST /api/v1/apps — JSON upload
 router.post('/', async (req: Request, res: Response) => {
   try {
     const app = await apps.createApp(req.body);
     res.status(201).json(app);
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// POST /api/v1/apps/upload — zip upload
+router.post('/upload', uploadMiddleware, async (req: Request, res: Response) => {
+  try {
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+    if (!files?.file?.[0]) {
+      res.status(400).json({ error: { code: 'validation_error', message: 'No zip file uploaded. Use form field "file".' } });
+      return;
+    }
+
+    const config = req.body?.config
+      ? JSON.parse(req.body.config)
+      : {};
+
+    if (!config.name || !config.type) {
+      res.status(400).json({ error: { code: 'validation_error', message: 'Config must include "name" and "type".' } });
+      return;
+    }
+
+    const app = await apps.createAppFromZip(
+      config.name,
+      config.type,
+      files.file[0].path,
+      config.config
+    );
+    res.status(201).json(app);
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// PUT /api/v1/apps/:name/upload — zip update
+router.put('/:name/upload', uploadMiddleware, async (req: Request, res: Response) => {
+  try {
+    const name = param(req, 'name');
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+    if (!files?.file?.[0]) {
+      res.status(400).json({ error: { code: 'validation_error', message: 'No zip file uploaded. Use form field "file".' } });
+      return;
+    }
+
+    let config: apps.AppConfig | undefined;
+    if (req.body?.config) {
+      const body = JSON.parse(req.body.config);
+      config = body.config;
+    }
+
+    const app = await apps.updateAppFromZip(name, files.file[0].path, config);
+    res.json(app);
   } catch (err) {
     handleError(res, err);
   }

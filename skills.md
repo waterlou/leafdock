@@ -53,6 +53,22 @@ Errors: 409 name exists, 400 invalid name or prefix conflict
 
 Name rules: `^[a-z][a-z0-9]*(-[a-z0-9]+)*$` — lowercase, hyphens, must start with a letter. Examples: `todo-app`, `weather`, `api-gateway`.
 
+### Create App (Zip Upload)
+```
+POST /apps/upload
+Multipart: file=@app.zip, config='{"name":"my-app","type":"static","config":{"spa":true}}'
+→ 201 + full app object
+```
+Use for apps with binary files (images, fonts, videos). The `config` field is a JSON string. The zip is extracted to the app directory.
+
+### Update App (Zip Upload)
+```
+PUT /apps/:name/upload
+Multipart: file=@app.zip, config?='{"config":{"spa":false}}'
+→ 200 + updated app object
+```
+Replace all files from a new zip. Optional config update.
+
 ### Update App (full replace)
 ```
 PUT /apps/:name
@@ -196,4 +212,4 @@ Errors return: `{ error: { code, message } }`
 - **If 409 on create, use PUT to update.** The app already exists, just replace it with the new version.
 - **Use SPA mode for React/Vue/Svelte apps.** Set `config.spa: true` so client-side routing works.
 - **Docker apps take longer to start** (image pull + npm install). Tell the user it may take 30-60 seconds.
-- **Binary files are not supported** via JSON upload. If the app needs images or fonts, mention this limitation and suggest data URIs or external hosting.
+- **Binary files (images, fonts, video)** — use the zip upload endpoint (`POST /apps/upload`) to send a `.zip` file with all assets. The config is sent as a JSON string in the `config` multipart field.
