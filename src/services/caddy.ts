@@ -6,19 +6,28 @@ interface CaddyRoute {
   '@id'?: string;
 }
 
+export function adminFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(`${CADDY_ADMIN_URL}${path}`, {
+    ...init,
+    headers: {
+      'Origin': 'http://localhost',
+      ...init?.headers,
+    },
+  });
+}
+
 async function getRoutes(): Promise<CaddyRoute[]> {
-  const res = await fetch(`${CADDY_ADMIN_URL}/config/apps/http/servers/srv0/routes`);
+  const res = await adminFetch('/config/apps/http/servers/srv0/routes');
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Failed to get Caddy routes: ${res.status} ${body}`);
   }
-  // Caddy returns null if no routes exist yet
   const text = await res.text();
   return text ? JSON.parse(text) : [];
 }
 
 async function setRoutes(routes: CaddyRoute[]): Promise<void> {
-  const res = await fetch(`${CADDY_ADMIN_URL}/config/apps/http/servers/srv0/routes`, {
+  const res = await adminFetch('/config/apps/http/servers/srv0/routes', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(routes),
@@ -57,7 +66,7 @@ export async function addStaticRoute(prefix: string, appDir: string, spa: boolea
     handle,
   };
 
-  filtered.push(route);
+  filtered.unshift(route);
   await setRoutes(filtered);
 }
 
@@ -78,7 +87,7 @@ export async function addDockerRoute(prefix: string, containerName: string, port
     ],
   };
 
-  filtered.push(route);
+  filtered.unshift(route);
   await setRoutes(filtered);
 }
 

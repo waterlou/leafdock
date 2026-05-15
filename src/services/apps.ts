@@ -305,9 +305,7 @@ export async function getLogs(name: string, tail: number): Promise<string> {
 
   // For static apps, check Caddy access logs
   try {
-    const res = await fetch(
-      `${process.env.CADDY_ADMIN_URL || 'http://caddy:2019'}/config/apps/http/servers/srv0/logs`
-    );
+    const res = await caddy.adminFetch('/config/apps/http/servers/srv0/logs');
     if (res.ok) {
       const data = await (res.json() as Promise<{ logs?: string }>);
       // Filter logs for this app's prefix
