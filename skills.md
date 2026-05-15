@@ -29,7 +29,9 @@ Config: `{ image: "node:20-alpine", port: 3000, env: {}, command: "npm install &
 
 Base: `<INTRANET_HOST_URL>/api/v1`
 Auth: `Authorization: Bearer <INTRANET_HOST_KEY>`
-Content-Type: `application/json`
+Content-Type: `application/json` (for text-only apps) or `multipart/form-data` (zip upload for apps with images/fonts/binary files)
+
+:warning: **IMPORTANT — Zip upload is the RECOMMENDED method for creating any app with images, fonts, or other binary files. The JSON endpoint requires base64-encoding binary content, which the AI generates incorrectly.** Use `POST /apps/upload` (zip) instead of `POST /apps` (JSON) whenever the app has image files.
 
 ### List Apps
 ```
@@ -53,21 +55,37 @@ Errors: 409 name exists, 400 invalid name or prefix conflict
 
 Name rules: `^[a-z][a-z0-9]*(-[a-z0-9]+)*$` — lowercase, hyphens, must start with a letter. Examples: `todo-app`, `weather`, `api-gateway`.
 
-### Create App (Zip Upload)
+### Create App (Zip Upload) — RECOMMENDED
 ```
 POST /apps/upload
 Multipart: file=@app.zip, config='{"name":"my-app","type":"static","config":{"spa":true}}'
 → 201 + full app object
 ```
-Use for apps with binary files (images, fonts, videos). The `config` field is a JSON string. The zip is extracted to the app directory.
+**Always use this method when the app has images, fonts, videos, or any binary files.** Send the entire app as a `.zip` file. The `config` field is a JSON string containing `name`, `type`, and optional `config` and `prefix`. The zip contents become the app's file structure.
 
-### Update App (Zip Upload)
+cURL example:
+```bash
+curl -X POST $INTRANET_HOST_URL/api/v1/apps/upload \
+  -H "Authorization: Bearer $INTRANET_HOST_KEY" \
+  -F "file=@my-app.zip" \
+  -F 'config={"name":"my-app","type":"static","config":{"spa":true}}'
+```
+
+To update an existing app with a new zip:
 ```
 PUT /apps/:name/upload
 Multipart: file=@app.zip, config?='{"config":{"spa":false}}'
 → 200 + updated app object
 ```
-Replace all files from a new zip. Optional config update.
+
+### Create App (JSON — text-only apps)
+```
+POST /apps
+Body: { name, type, files: [{path, content}], config?, prefix? }
+→ 201 + full app object
+Errors: 409 name exists, 400 invalid name or prefix conflict
+```
+Only use this for apps with NO binary files (no images, no fonts, no videos). Each file is sent as `{path, content}` with UTF-8 text content.
 
 ### Update App (full replace)
 ```
@@ -111,50 +129,85 @@ GET /health
 ```
 No auth required.
 
-## Workflow: Deploy a Static App
+## Workflow: Deploy a Static App (recommended)
+
+Use zip upload for all apps with asset files (images, fonts, CSS, JS). This avoids base64 encoding issues.
 
 ```javascript
 const API = "<INTRANET_HOST_URL>/api/v1";
 const HEADERS = {
   "Authorization": "Bearer <INTRANET_HOST_KEY>",
-  "Content-Type": "application/json"
 };
 
 // 1. Check if app exists
 let res = await fetch(`${API}/apps/my-app`, { headers: HEADERS });
 const exists = res.ok;
+const method = exists ? "PUT" : "POST";
+const url = exists ? `${API}/apps/my-app/upload` : `${API}/apps/upload`;
 
-// 2. Collect all source files as { path, content }
-const files = [
-  { path: "index.html", content: "<!DOCTYPE html>..." },
-  { path: "style.css", content: "body { ... }" },
-  { path: "app.js", content: "console.log('ready');" }
-];
+// 2. Create a zip with all files
+//    Include images, fonts, etc. directly — no base64 needed
+const zip = new JSZip();
+zip.file("index.html", "<!DOCTYPE html>...");
+zip.file("style.css", "body { ... }");
+zip.file("app.js", "console.log('ready');");
+zip.file("images/logo.png", imageBlob);  // binary file, no encoding needed
+const zipBlob = await zip.generateAsync({ type: "blob" });
 
-// 3. Create or update
-const body = JSON.stringify({
+// 3. Upload as multipart form
+const formData = new FormData();
+formData.append("file", zipBlob, "app.zip");
+formData.append("config", JSON.stringify({
   name: "my-app",
   type: "static",
-  files,
   config: { spa: true }
-});
+}));
 
-res = await fetch(`${API}/apps`, {
+res = await fetch(url, {
   method: exists ? "PUT" : "POST",
-  headers: HEADERS,
-  body
+  headers: { "Authorization": HEADERS.Authorization },
+  body: formData
 });
 
-// For PUT, use: fetch(`${API}/apps/my-app`, { method: "PUT", ... })
-
-const url = `${INTRANET_HOST_URL}/my-app`;
+const appUrl = `${INTRANET_HOST_URL}/my-app`;
 if (res.ok) {
-  console.log(`${exists ? "Updated" : "Deployed"}: ${url}`);
+  console.log(`${exists ? "Updated" : "Deployed"}: ${appUrl}`);
 } else {
   const err = await res.json();
   console.error("Failed:", err.error.message);
 }
 ```
+
+### Quick cURL alternative (no JS needed)
+
+```bash
+# Create app
+curl -X POST $INTRANET_HOST_URL/api/v1/apps/upload \
+  -H "Authorization: Bearer $INTRANET_HOST_KEY" \
+  -F "file=@my-app.zip" \
+  -F 'config={"name":"my-app","type":"static","config":{"spa":true}}'
+
+# Update existing app
+curl -X PUT $INTRANET_HOST_URL/api/v1/apps/my-app/upload \
+  -H "Authorization: Bearer $INTRANET_HOST_KEY" \
+  -F "file=@my-app-v2.zip" \
+  -F 'config={"config":{"spa":false}}'
+```
+
+> **If you don't have a zip library available** and the app has only text files (no images, fonts, or video), you can use the JSON endpoint instead:
+> ```javascript
+> // POST /apps with Content-Type: application/json
+> // Only for text-only apps
+> const body = JSON.stringify({
+>   name: "my-app", type: "static",
+>   files: [
+>     { path: "index.html", content: "<!DOCTYPE html>..." },
+>     { path: "style.css", content: "body { ... }" }
+>   ],
+>   config: { spa: true }
+> });
+> await fetch(`${API}/apps`, { method: "POST", headers: {...HEADERS, "Content-Type": "application/json"}, body });
+> ```
 
 ## Workflow: Deploy a Docker App
 
@@ -212,4 +265,5 @@ Errors return: `{ error: { code, message } }`
 - **If 409 on create, use PUT to update.** The app already exists, just replace it with the new version.
 - **Use SPA mode for React/Vue/Svelte apps.** Set `config.spa: true` so client-side routing works.
 - **Docker apps take longer to start** (image pull + npm install). Tell the user it may take 30-60 seconds.
-- **Binary files (images, fonts, video)** — use the zip upload endpoint (`POST /apps/upload`) to send a `.zip` file with all assets. The config is sent as a JSON string in the `config` multipart field.
+- **ALWAYS use zip upload for apps with images, fonts, or videos.** The JSON endpoint (`POST /apps`) requires base64-encoding binary content, which the AI generates incorrectly — files end up corrupt and invisible in the browser. Use `POST /apps/upload` with `multipart/form-data` instead. See the "Deploy a Static App" workflow above.
+- **For text-only apps (no images/fonts/video), JSON upload is fine.** You can use `POST /apps` with `Content-Type: application/json`.
