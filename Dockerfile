@@ -1,17 +1,22 @@
 FROM node:20-alpine
 
+ARG TARGETARCH
+
 RUN apk add --no-cache docker-cli curl && \
-    PLAT=$(uname -s | tr '[:upper:]' '[:lower:]') && \
-    curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-${PLAT}-$(uname -m)" -o /usr/local/bin/docker-compose && \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        COMPOSE_ARCH=aarch64; \
+        CADDY_ARCH=arm64; \
+    else \
+        COMPOSE_ARCH=x86_64; \
+        CADDY_ARCH=amd64; \
+    fi && \
+    curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${COMPOSE_ARCH}" -o /usr/local/bin/docker-compose && \
     chmod +x /usr/local/bin/docker-compose && \
     mkdir -p /usr/lib/docker/cli-plugins && \
     ln -s /usr/local/bin/docker-compose /usr/lib/docker/cli-plugins/docker-compose && \
-    case $(uname -m) in \
-      x86_64) arch=amd64 ;; \
-      aarch64) arch=arm64 ;; \
-      *) arch=amd64 ;; \
-    esac && \
-    curl -fsSL "https://github.com/caddyserver/caddy/releases/latest/download/caddy_linux_${arch}.tar.gz" | tar xz -C /usr/local/bin caddy && \
+    curl -fsSL "https://github.com/caddyserver/caddy/releases/latest/download/caddy_linux_${CADDY_ARCH}.tar.gz" -o /tmp/caddy.tar.gz && \
+    tar xzf /tmp/caddy.tar.gz -C /usr/local/bin caddy && \
+    rm /tmp/caddy.tar.gz && \
     apk del curl
 
 WORKDIR /app
