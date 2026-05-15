@@ -5,17 +5,17 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
-const COMPOSE_PROJECT_PREFIX = 'ih-';
+const COMPOSE_PROJECT_PREFIX = 'ld-';
 
 function projectName(name: string): string {
   return `${COMPOSE_PROJECT_PREFIX}${name}`;
 }
 
 function generateNetworkOverride(name: string, services: Record<string, { port: number }>): string {
-  let yaml = `networks:\n  intranet-host_default:\n    external: true\n\nservices:\n`;
+  let yaml = `networks:\n  leafdock_default:\n    external: true\n\nservices:\n`;
   for (const serviceName of Object.keys(services)) {
     const containerName = `${COMPOSE_PROJECT_PREFIX}${name}-${serviceName}`;
-    yaml += `  ${serviceName}:\n    container_name: ${containerName}\n    networks:\n      - intranet-host_default\n`;
+    yaml += `  ${serviceName}:\n    container_name: ${containerName}\n    networks:\n      - leafdock_default\n`;
   }
   return yaml;
 }

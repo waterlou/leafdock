@@ -1,4 +1,4 @@
-# Intranet Host — Project Specification
+# Leafdock — Project Specification
 
 ## Purpose
 

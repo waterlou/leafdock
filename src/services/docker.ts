@@ -12,7 +12,7 @@ interface DockerAppConfig {
 }
 
 export function containerNameForApp(name: string): string {
-  return `ih-app-${name}`;
+  return `ld-app-${name}`;
 }
 
 export async function createContainer(
@@ -39,12 +39,12 @@ export async function createContainer(
     HostConfig: {
       Mounts: [{
         Type: 'volume',
-        Source: process.env.APP_VOLUME || 'intranet-host_app_data',
+        Source: process.env.APP_VOLUME || 'leafdock_app_data',
         Target: '/app',
       }],
       CpuShares: parseCpuLimit(config.cpu_limit),
       Memory: parseMemLimit(config.mem_limit),
-      NetworkMode: 'intranet-host_default', // Docker Compose network
+      NetworkMode: 'leafdock_default', // shared Docker network
       RestartPolicy: {
         Name: 'unless-stopped',
       },

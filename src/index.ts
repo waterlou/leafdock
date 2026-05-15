@@ -16,7 +16,7 @@ function ensureLandingPage(): void {
   fs.mkdirSync(landingDir, { recursive: true });
 
   const indexPath = path.join(landingDir, 'index.html');
-  const title = process.env.TITLE || 'Intranet Host';
+  const title = process.env.TITLE || 'Leafdock';
 
   fs.writeFileSync(indexPath, `<!DOCTYPE html>
 <html lang="en">

@@ -3,7 +3,7 @@ import path from 'path';
 import os from 'os';
 
 const upload = multer({
-  dest: path.join(os.tmpdir(), 'intranet-host-uploads'),
+  dest: path.join(os.tmpdir(), 'leafdock-uploads'),
   limits: {
     fileSize: 100 * 1024 * 1024, // 100MB max
   },

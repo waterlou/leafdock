@@ -1,9 +1,9 @@
 ---
-name: intranet-host
+name: leafdock
 description: Deploy and manage web apps on an internal Docker host via REST API. Use when the user asks to deploy, host, or publish an app, website, or service to their NAS or internal network.
 ---
 
-You have access to an **intranet host** — a Docker-based system that runs on the user's NAS and serves web apps under URL prefixes (e.g., `https://nas.ts.net/my-app`). You can deploy, update, list, and remove apps through its management API.
+You have access to **Leafdock** — a Docker-based system that runs on the user's NAS and serves web apps under URL prefixes (e.g., `https://nas.ts.net/my-app`). You can deploy, update, list, and remove apps through its management API.
 
 ## Configuration
 
@@ -54,8 +54,8 @@ Example payload:
 
 Key details:
 - The `db` service above is listed in the compose file but NOT in `config.services` — only routed services need to be declared
-- All routed services automatically join the `intranet-host_default` network, making them reachable from Caddy
-- Container names follow the pattern `ih-<appName>-<serviceName>` for stable routing
+- All routed services automatically join the `leafdock_default` network, making them reachable from Caddy
+- Container names follow the pattern `ld-<appName>-<serviceName>` for stable routing
 - Use zip upload for compose apps with build context directories: `POST /apps/upload` with the full project as a zip
 - The app directory (`/data/apps/<name>/`) contains all uploaded files including the compose file and any build contexts (Dockerfiles, etc.)
 

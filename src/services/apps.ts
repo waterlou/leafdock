@@ -714,7 +714,7 @@ export async function syncRoutes(): Promise<void> {
   }
 }
 
-const COMPOSE_PROJECT_PREFIX = 'ih-';
+const COMPOSE_PROJECT_PREFIX = 'ld-';
 
 function composeContainerName(appName: string, serviceName: string): string {
   return `${COMPOSE_PROJECT_PREFIX}${appName}-${serviceName}`;
