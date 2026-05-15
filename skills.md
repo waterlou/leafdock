@@ -245,6 +245,8 @@ const res = await fetch(`${API}/apps`, {
 
 The app is reachable at `<INTRANET_HOST_URL>/my-api`. Caddy reverse-proxies to the container's port 3000.
 
+> Docker apps with binary files (e.g. a Python app with ML models) should also use zip upload: `POST /apps/upload` with `file=@app.zip` and `config='{"name":"my-api","type":"docker","config":{...}}'`.
+
 ## Error Handling
 
 Errors return: `{ error: { code, message } }`
