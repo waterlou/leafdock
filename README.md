@@ -54,30 +54,19 @@ The management API is available at `http://<nas-hostname>/api/v1`. Apps are serv
 
 ```bash
 # Create a Docker network
-docker network create leafdock
+docker network create leafdock_default
 
-# Start Caddy reverse proxy
+# Build and run the combined Caddy + API container
+docker build -t leafdock .
+
 docker run -d \
-  --name leafdock-caddy \
-  --network leafdock \
+  --name leafdock \
+  --network leafdock_default \
   -p 80:80 \
-  -v leafdock_data:/data \
-  -v $PWD/Caddyfile:/etc/caddy/Caddyfile:ro \
-  caddy:2-alpine
-
-# Build the management API image
-docker build -t leafdock-api .
-
-# Start the management API
-docker run -d \
-  --name leafdock-api \
-  --network leafdock \
-  -p 3001:3001 \
   -e MANAGEMENT_API_KEY=$(openssl rand -hex 32) \
-  -e CADDY_ADMIN_URL=http://leafdock-caddy:2019 \
-  -v leafdock_data:/data \
+  -v leafdock_app_data:/data \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  leafdock-api
+  leafdock
 ```
 
 ---
@@ -95,7 +84,7 @@ npm install
 docker run -d \
   --name leafdock-caddy \
   -p 80:80 \
-  -v leafdock_data:/data \
+  -v leafdock_app_data:/data \
   -v $PWD/Caddyfile:/etc/caddy/Caddyfile:ro \
   caddy:2-alpine
 
@@ -196,22 +185,24 @@ All `/apps` endpoints require `Authorization: Bearer <MANAGEMENT_API_KEY>`.
 Full API docs in [api-docs.md](api-docs.md). AI agent usage examples in [skills.md](skills.md).
 
 ## Architecture
+## Architecture
 
 ```
                    ┌─────────────────────────────────┐
                    │       Docker Host (NAS)           │
                    │                                   │
- Tailscale ───────►│  Caddy :80                        │
- (external)        │  ├─ /api/*  → management-api:3001  │
-                   │  ├─ /app-a  → static files        │
-                   │  ├─ /app-b  → app container        │
-                   │  └─ /       → landing page        │
-                   │                                   │
-                   │  management-api (Node.js)          │
-                   │  ├─ SQLite at /data/management.db  │
-                   │  ├─ Apps at /data/apps/<name>/     │
-                   │  ├─ Talks to Caddy admin API       │
-                   │  └─ Talks to Docker socket         │
+ Tailscale ────────►│  leafdock (single container)      │
+ (external)        │  ├─ Caddy :80                     │
+                   │  │  ├─ /api/*  → localhost:3001    │
+                   │  │  ├─ /app-a  → user container    │
+                   │  │  ├─ /app-b  → user container    │
+                   │  │  └─ /       → landing page     │
+                   │  │                                 │
+                   │  └─ management-api (Node.js)       │
+                   │     ├─ SQLite at /data/management.db│
+                   │     ├─ Apps at /data/apps/<name>/   │
+                   │     ├─ Talks to Caddy admin API    │
+                   │     └─ Talks to Docker socket      │
                    └─────────────────────────────────┘
 ```
 
@@ -219,19 +210,20 @@ Full API docs in [api-docs.md](api-docs.md). AI agent usage examples in [skills.
 
 | File | Purpose |
 |------|---------|
-| `docker-compose.yml` | Service definitions |
-| `Caddyfile` | Reverse proxy base config |
-| `Dockerfile` | Management API image |
+| `docker-compose.yml` | Single-service definition |
+| `Caddyfile` | Reverse proxy config (baked into image) |
+| `Dockerfile` | Combined image (Caddy + Node.js) |
+| `docker-entrypoint.sh` | Starts Caddy and Node.js |
 | `src/index.ts` | Express server entry point |
 | `src/db.ts` | SQLite database layer |
 | `src/routes/apps.ts` | App CRUD endpoints |
 | `src/services/apps.ts` | App lifecycle logic |
 | `src/services/caddy.ts` | Caddy admin API client |
 | `src/services/docker.ts` | Docker container management |
+| `src/services/compose.ts` | Docker Compose lifecycle |
 | `specs.md` | Project specification |
 | `api-docs.md` | Full API reference |
 | `skills.md` | How-to guide for AI agents |
-
 ## Environment Variables
 
 | Variable | Default | Description |

@@ -1,24 +1,15 @@
 services:
-  caddy:
-    image: caddy:2-alpine
+  leafdock:
+    build: .
+    image: ghcr.io/waterlou/leafdock:main
     ports:
       - "${HTTP_PORT:-80}:${HTTP_PORT:-80}"
     environment:
       - HTTP_PORT=${HTTP_PORT:-80}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - app_data:/data
-    restart: unless-stopped
-
-  management-api:
-    build: .
-    depends_on:
-      - caddy
-    environment:
-      - MANAGEMENT_API_KEY=${MANAGEMENT_API_KEY:-change-me}
+      - MANAGEMENT_API_KEY=${MANAGEMENT_API_KEY:?set MANAGEMENT_API_KEY in .env}
       - PORT=3001
       - DATA_DIR=/data
-      - CADDY_ADMIN_URL=http://caddy:2019
+      - CADDY_ADMIN_URL=http://localhost:2019
       - DOCKER_SOCKET=/var/run/docker.sock
       - APP_VOLUME=leafdock_app_data
     volumes:
