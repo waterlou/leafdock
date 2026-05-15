@@ -1,17 +1,18 @@
 FROM node:20-alpine
 
-RUN apk add --no-cache docker-cli && \
-    wget -qO /usr/local/bin/docker-compose "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" && \
+RUN apk add --no-cache docker-cli curl && \
+    PLAT=$(uname -s | tr '[:upper:]' '[:lower:]') && \
+    curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-${PLAT}-$(uname -m)" -o /usr/local/bin/docker-compose && \
     chmod +x /usr/local/bin/docker-compose && \
     mkdir -p /usr/lib/docker/cli-plugins && \
-    ln -s /usr/local/bin/docker-compose /usr/lib/docker/cli-plugins/docker-compose
-
-RUN case $(uname -m) in \
-      x86_64) CARCH=amd64 ;; \
-      aarch64) CARCH=arm64 ;; \
-      *) CARCH=amd64 ;; \
+    ln -s /usr/local/bin/docker-compose /usr/lib/docker/cli-plugins/docker-compose && \
+    case $(uname -m) in \
+      x86_64) arch=amd64 ;; \
+      aarch64) arch=arm64 ;; \
+      *) arch=amd64 ;; \
     esac && \
-    wget -qO- "https://github.com/caddyserver/caddy/releases/latest/download/caddy_linux_${CARCH}.tar.gz" | tar xz -C /usr/local/bin caddy
+    curl -fsSL "https://github.com/caddyserver/caddy/releases/latest/download/caddy_linux_${arch}.tar.gz" | tar xz -C /usr/local/bin caddy && \
+    apk del curl
 
 WORKDIR /app
 
