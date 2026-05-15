@@ -18,7 +18,9 @@
       "Bash(python3 -c \"import sys,json; print\\(json.load\\(sys.stdin\\)['status']\\)\")",
       "Bash(python3 -c \"import sys,json; [print\\(a['name'],a['type'],a['status']\\) for a in json.load\\(sys.stdin\\)['apps']]\")",
       "Bash(python3 -c \"import sys,json; print\\('updated:', json.load\\(sys.stdin\\)['updated_at']\\)\")",
-      "Bash(python3 -c \"import sys,json; print\\(len\\(json.load\\(sys.stdin\\)['apps']\\), 'apps remaining'\\)\")"
+      "Bash(python3 -c \"import sys,json; print\\(len\\(json.load\\(sys.stdin\\)['apps']\\), 'apps remaining'\\)\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('prefix:', d['prefix']\\)\")"
     ]
   }
 }

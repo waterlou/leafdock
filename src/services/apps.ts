@@ -66,6 +66,10 @@ export class ValidationError extends Error {
   }
 }
 
+function normalizePrefix(prefix: string): string {
+  return prefix.startsWith('/') ? prefix : `/${prefix}`;
+}
+
 function getDataDir(): string {
   return process.env.DATA_DIR || '/data';
 }
@@ -150,7 +154,7 @@ export function getApp(name: string): AppOutput | null {
 export async function createApp(input: AppInput): Promise<AppOutput> {
   validateName(input.name);
 
-  const prefix = input.prefix || prefixFromName(input.name);
+  const prefix = normalizePrefix(input.prefix || prefixFromName(input.name));
 
   if (db.appExists(input.name)) {
     throw new ValidationError(`App "${input.name}" already exists`);
@@ -217,9 +221,10 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
   }
 
   // Update prefix if provided
-  if (input.prefix && input.prefix !== existing.prefix) {
-    if (db.prefixExists(input.prefix)) {
-      throw new ValidationError(`Prefix "${input.prefix}" is already in use`);
+  const newPrefix = input.prefix ? normalizePrefix(input.prefix) : null;
+  if (newPrefix && newPrefix !== existing.prefix) {
+    if (db.prefixExists(newPrefix)) {
+      throw new ValidationError(`Prefix "${newPrefix}" is already in use`);
     }
     // Remove old Caddy route, add new one
     await caddy.removeRoute(existing.prefix);
@@ -227,13 +232,13 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
     if (existing.type === 'docker') {
       const dockerConfig = (input.config ? input.config : JSON.parse(existing.config)) as DockerAppConfig;
       const containerName = docker.containerNameForApp(existing.name);
-      await caddy.addDockerRoute(input.prefix, containerName, dockerConfig.port);
+      await caddy.addDockerRoute(newPrefix, containerName, dockerConfig.port);
     } else {
       const staticConfig = (input.config ? input.config : JSON.parse(existing.config)) as StaticAppConfig;
-      await caddy.addStaticRoute(input.prefix, appDir(name), staticConfig.spa, staticConfig.index);
+      await caddy.addStaticRoute(newPrefix, appDir(name), staticConfig.spa, staticConfig.index);
     }
 
-    updates.prefix = input.prefix;
+    updates.prefix = newPrefix;
   }
 
   // If docker app and config changed, restart container
