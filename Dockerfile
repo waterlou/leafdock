@@ -2,18 +2,12 @@ FROM node:20-alpine
 
 ARG TARGETARCH
 
-RUN apk add --no-cache docker-cli curl && \
+RUN apk add --no-cache docker-cli docker-cli-compose curl && \
     if [ "$TARGETARCH" = "arm64" ]; then \
-        COMPOSE_ARCH=aarch64; \
         CADDY_ARCH=arm64; \
     else \
-        COMPOSE_ARCH=x86_64; \
         CADDY_ARCH=amd64; \
     fi && \
-    curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${COMPOSE_ARCH}" -o /usr/local/bin/docker-compose && \
-    chmod +x /usr/local/bin/docker-compose && \
-    mkdir -p /usr/lib/docker/cli-plugins && \
-    ln -s /usr/local/bin/docker-compose /usr/lib/docker/cli-plugins/docker-compose && \
     curl -fsSL "https://github.com/caddyserver/caddy/releases/latest/download/caddy_linux_${CADDY_ARCH}.tar.gz" -o /tmp/caddy.tar.gz && \
     tar xzf /tmp/caddy.tar.gz -C /usr/local/bin caddy && \
     rm /tmp/caddy.tar.gz && \
