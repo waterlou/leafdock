@@ -1,6 +1,10 @@
 FROM node:20-alpine
 
-RUN apk add --no-cache docker-cli docker-cli-compose-plugin
+RUN apk add --no-cache docker-cli && \
+    wget -qO /usr/local/bin/docker-compose "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" && \
+    chmod +x /usr/local/bin/docker-compose && \
+    mkdir -p /usr/lib/docker/cli-plugins && \
+    ln -s /usr/local/bin/docker-compose /usr/lib/docker/cli-plugins/docker-compose
 
 WORKDIR /app
 
