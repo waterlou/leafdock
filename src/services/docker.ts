@@ -32,12 +32,16 @@ export async function createContainer(
     Image: config.image,
     Env: envVars,
     Cmd: config.command ? ['sh', '-c', config.command] : undefined,
-    WorkingDir: '/app',
+    WorkingDir: `/app/apps/${appName}`,
     ExposedPorts: {
       [`${config.port}/tcp`]: {},
     },
     HostConfig: {
-      Binds: [`${appDir}:/app`],
+      Mounts: [{
+        Type: 'volume',
+        Source: process.env.APP_VOLUME || 'intranet-host_app_data',
+        Target: '/app',
+      }],
       CpuShares: parseCpuLimit(config.cpu_limit),
       Memory: parseMemLimit(config.mem_limit),
       NetworkMode: 'intranet-host_default', // Docker Compose network
@@ -97,13 +101,25 @@ export async function getContainerLogs(appName: string, tail: number): Promise<s
     );
     if (existing) {
       const container = docker.getContainer(existing.Id);
-      const stream = await container.logs({
+      const raw = (await container.logs({
         stdout: true,
         stderr: true,
         tail,
         timestamps: true,
-      });
-      return stream.toString('utf-8');
+      })) as Buffer;
+
+      // Strip Docker's 8-byte stream header from each chunk
+      const lines: string[] = [];
+      let offset = 0;
+      const buf = raw instanceof Buffer ? raw : Buffer.from(raw);
+      while (offset < buf.length) {
+        const header = buf.readUInt32BE(offset + 4); // length in bytes 4-7
+        offset += 8;
+        const line = buf.toString('utf-8', offset, offset + header);
+        lines.push(line.trimEnd());
+        offset += header;
+      }
+      return lines.join('\n');
     }
     return '(container not found)';
   } catch {

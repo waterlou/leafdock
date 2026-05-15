@@ -161,7 +161,7 @@ export async function createApp(input: AppInput): Promise<AppOutput> {
   }
 
   const now = new Date().toISOString();
-  const config = input.config || getDefaultConfig(input.type);
+  const config: AppConfig = { ...getDefaultConfig(input.type), ...input.config };
 
   // Write files to disk
   writeFiles(input.name, input.files);
@@ -261,9 +261,7 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
     await caddy.addStaticRoute(prefix, appDir(name), config.spa, config.index);
   }
 
-  if (Object.keys(updates).length > 1) {
-    db.updateApp(name, updates);
-  }
+  db.updateApp(name, updates);
 
   return rowToOutput(db.getApp(name)!);
 }

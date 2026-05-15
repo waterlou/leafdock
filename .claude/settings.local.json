@@ -7,7 +7,18 @@
       "Bash(git init *)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(git branch *)"
+      "Bash(git branch *)",
+      "Bash(docker info *)",
+      "Bash(docker compose up *)",
+      "Bash(docker compose *)",
+      "Bash(curl *)",
+      "Bash(python3 -m json.tool)",
+      "Bash(docker volume *)",
+      "Bash(python3 -c \"import sys,json; routes=json.load\\(sys.stdin\\); r=[x for x in routes if x.get\\('@id'\\)=='app-hello-api']; print\\(json.dumps\\(r,indent=2\\)\\)\")",
+      "Bash(python3 -c \"import sys,json; print\\(json.load\\(sys.stdin\\)['status']\\)\")",
+      "Bash(python3 -c \"import sys,json; [print\\(a['name'],a['type'],a['status']\\) for a in json.load\\(sys.stdin\\)['apps']]\")",
+      "Bash(python3 -c \"import sys,json; print\\('updated:', json.load\\(sys.stdin\\)['updated_at']\\)\")",
+      "Bash(python3 -c \"import sys,json; print\\(len\\(json.load\\(sys.stdin\\)['apps']\\), 'apps remaining'\\)\")"
     ]
   }
 }

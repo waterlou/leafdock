@@ -42,28 +42,29 @@ export async function addStaticRoute(prefix: string, appDir: string, spa: boolea
   const routes = await getRoutes();
   const routeId = `app-${prefix.replace(/^\//, '').replace(/\//g, '-')}`;
 
-  // Remove existing route with same ID if present
   const filtered = routes.filter(r => r['@id'] !== routeId);
 
-  const handle: Record<string, unknown>[] = [
+  const subRoutes: Record<string, unknown>[] = [
     {
-      handler: 'file_server',
-      root: appDir,
+      handle: [{ handler: 'rewrite', strip_path_prefix: prefix }],
     },
   ];
 
   if (spa) {
-    // For SPA, first try to serve the file, fall back to index.html
-    handle.push({
-      handler: 'rewrite',
-      uri: `{http.request.uri.path}/${index}`,
+    subRoutes.push({
+      match: [{ not: [{ file: { root: appDir } }] }],
+      handle: [{ handler: 'rewrite', uri: '/' + index }],
     });
   }
+
+  subRoutes.push({
+    handle: [{ handler: 'file_server', root: appDir }],
+  });
 
   const route: CaddyRoute = {
     '@id': routeId,
     match: [{ path: [prefix, `${prefix}/*`] }],
-    handle,
+    handle: [{ handler: 'subroute', routes: subRoutes }],
   };
 
   filtered.unshift(route);

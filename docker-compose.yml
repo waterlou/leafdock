@@ -18,6 +18,7 @@ services:
       - DATA_DIR=/data
       - CADDY_ADMIN_URL=http://caddy:2019
       - DOCKER_SOCKET=/var/run/docker.sock
+      - APP_VOLUME=intranet-host_app_data
     volumes:
       - app_data:/data
       - /var/run/docker.sock:/var/run/docker.sock
