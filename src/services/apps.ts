@@ -463,6 +463,36 @@ export async function restartApp(name: string): Promise<AppOutput> {
   return rowToOutput(db.getApp(name)!);
 }
 
+export async function syncRoutes(): Promise<void> {
+  // Wait for Caddy admin API to be ready
+  for (let i = 0; i < 30; i++) {
+    try {
+      await caddy.adminFetch('/config/');
+      break;
+    } catch {
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+
+  const rows = db.listApps();
+  for (const row of rows) {
+    const config = JSON.parse(row.config);
+    try {
+      if (row.type === 'docker') {
+        const dockerConfig = config as DockerAppConfig;
+        const containerName = docker.containerNameForApp(row.name);
+        await caddy.addDockerRoute(row.prefix, containerName, dockerConfig.port);
+      } else {
+        const staticConfig = config as StaticAppConfig;
+        await caddy.addStaticRoute(row.prefix, appDir(row.name), staticConfig.spa, staticConfig.index);
+      }
+      console.log(`Restored route for "${row.name}"`);
+    } catch (err) {
+      console.error(`Failed to sync route for "${row.name}":`, err);
+    }
+  }
+}
+
 function getDefaultConfig(type: 'static' | 'docker'): AppConfig {
   if (type === 'static') {
     return { index: 'index.html', spa: false };

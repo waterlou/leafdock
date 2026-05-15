@@ -10,10 +10,10 @@
         reverse_proxy management-api:3001
     }
 
-    # Landing page
+    # Landing page — serve index.html for all unmatched paths
     handle {
-        file_server {
-            root /data/landing
-        }
+        root * /data/landing
+        rewrite * /index.html
+        file_server
     }
 }

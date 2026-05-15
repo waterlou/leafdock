@@ -12,6 +12,8 @@ services:
 
   management-api:
     build: .
+    depends_on:
+      - caddy
     environment:
       - MANAGEMENT_API_KEY=${MANAGEMENT_API_KEY:-change-me}
       - PORT=3001
