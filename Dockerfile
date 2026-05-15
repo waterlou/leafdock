@@ -4,10 +4,12 @@ RUN apk add --no-cache docker-cli docker-cli-compose-plugin
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+COPY package.json package-lock.json* tsconfig.json ./
+COPY src/ src/
 
-COPY dist/ dist/
+RUN npm ci
+RUN npm run build
+RUN npm prune --omit=dev
 
 ENV PORT=3001
 ENV DATA_DIR=/data
