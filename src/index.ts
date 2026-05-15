@@ -101,16 +101,16 @@ function renderApps(container, apps, sortBy) {
   appsData = apps;
   var filtered = editing ? apps : apps.filter(function(a) { return a.status === 'running'; });
   var sorted = filtered.slice().sort(function(a, b) {
-    if (sortBy === 'name') return a.name.localeCompare(b.name);
+    if (sortBy === 'name') return (a.title || a.name).localeCompare(b.title || b.name);
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   });
   if (sorted.length === 0) {
-    container.innerHTML = '<div class="empty' + (editing ? '' : '') + '">' + (editing ? 'No apps. Deploy one using the API.' : 'No apps deployed yet.') + '</div>';
+    container.innerHTML = '<div class="empty">' + (editing ? 'No apps. Deploy one using the API.' : 'No apps deployed yet.') + '</div>';
     return;
   }
   container.innerHTML = '<ul class="apps' + (editing ? ' editing' : '') + '">' + sorted.map(function(a) {
     return '<li>' +
-      '<a href="' + a.prefix + '/" class="app-name">' + a.name + '</a>' +
+      '<a href="' + a.prefix + '/" class="app-name">' + (a.title || a.name) + '</a>' +
       '<span class="app-info"><span class="app-type">' + a.type + '</span> <span class="status ' + a.status + '"' + (editing ? ' data-action="toggle-status" data-name="' + a.name + '"' : '') + '>' + a.status + '</span></span>' +
       '<span class="app-actions">' +
         '<button class="exp-btn" data-name="' + a.name + '">Export</button>' +

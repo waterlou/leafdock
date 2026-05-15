@@ -25,6 +25,40 @@ A container built from source files. Files are mounted at `/app`, the container 
 
 Config: `{ image: "node:20-alpine", port: 3000, env: {}, command: "npm install && node server.js", cpu_limit: "0.5", mem_limit: "128m" }`
 
+### docker-compose
+Multiple containers defined in a `docker-compose.yml`. Files are extracted to the app directory, and `docker compose up -d` starts all services. Caddy routes to individual services — the first service in `config.services` gets the main prefix (`/<name>/`), additional services get sub-prefixes (`/<name>/<serviceName>/`).
+
+Use for apps with multiple services: a web frontend, an API, a database, etc.
+
+Config: `{ compose_file?: "docker-compose.yml", services: { web: { port: 3000 }, api: { port: 4000 } } }`
+
+- `compose_file` — defaults to `docker-compose.yml` if not specified
+- `services` — map of service name to port. Only services that need Caddy routing should be listed here. Internal services (databases, caches) stay on the compose internal network and should be omitted.
+
+Example payload:
+```json
+{
+  "name": "myapp",
+  "type": "docker-compose",
+  "files": [
+    { "path": "docker-compose.yml", "content": "services:\n  web:\n    build: ./web\n    ports: [\"3000\"]\n  api:\n    build: ./api\n    ports: [\"4000\"]\n  db:\n    image: postgres:16" }
+  ],
+  "config": {
+    "services": {
+      "web": { "port": 3000 },
+      "api": { "port": 4000 }
+    }
+  }
+}
+```
+
+Key details:
+- The `db` service above is listed in the compose file but NOT in `config.services` — only routed services need to be declared
+- All routed services automatically join the `intranet-host_default` network, making them reachable from Caddy
+- Container names follow the pattern `ih-<appName>-<serviceName>` for stable routing
+- Use zip upload for compose apps with build context directories: `POST /apps/upload` with the full project as a zip
+- The app directory (`/data/apps/<name>/`) contains all uploaded files including the compose file and any build contexts (Dockerfiles, etc.)
+
 ## API Reference
 
 Base: `<INTRANET_HOST_URL>/api/v1`
@@ -269,3 +303,12 @@ Errors return: `{ error: { code, message } }`
 - **Docker apps take longer to start** (image pull + npm install). Tell the user it may take 30-60 seconds.
 - **ALWAYS use zip upload for apps with images, fonts, or videos.** The JSON endpoint (`POST /apps`) requires base64-encoding binary content, which the AI generates incorrectly — files end up corrupt and invisible in the browser. Use `POST /apps/upload` with `multipart/form-data` instead. See the "Deploy a Static App" workflow above.
 - **For text-only apps (no images/fonts/video), JSON upload is fine.** You can use `POST /apps` with `Content-Type: application/json`.
+- **Match the landing page's dark/light theme in your app.** The landing page stores the user's theme preference in `localStorage` under the key `"theme"` (values: `"dark"` or `"light"`). Include a snippet at the top of `<body>` in every generated app so it picks up the user's current theme:
+  ```html
+  <script>
+    if (localStorage.getItem('theme') === 'light') {
+      document.documentElement.classList.add('light');
+    }
+  </script>
+  ```
+  Define `.light` overrides in your CSS (e.g. on `:root` or `body`) so the app looks consistent when the user toggles themes on the landing page.

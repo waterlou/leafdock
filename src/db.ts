@@ -19,7 +19,7 @@ export async function initDb(dataDir: string): Promise<void> {
   db.run(`
     CREATE TABLE IF NOT EXISTS apps (
       name TEXT PRIMARY KEY,
-      type TEXT NOT NULL CHECK(type IN ('static', 'docker')),
+      type TEXT NOT NULL CHECK(type IN ('static', 'docker', 'docker-compose')),
       prefix TEXT NOT NULL UNIQUE,
       status TEXT NOT NULL DEFAULT 'running',
       config TEXT NOT NULL DEFAULT '{}',
@@ -30,6 +30,30 @@ export async function initDb(dataDir: string): Promise<void> {
   `);
 
   saveDb();
+
+  // Migration: remove old CHECK constraint if it only allowed 'static' and 'docker'
+  const results = db.exec("SELECT sql FROM sqlite_master WHERE type='table' AND name='apps'");
+  if (results.length > 0) {
+    const sql = results[0].values[0][0] as string;
+    if (sql.includes("CHECK(type IN ('static', 'docker'))")) {
+      db.run("ALTER TABLE apps RENAME TO apps_old");
+      db.run(`CREATE TABLE apps (
+        name TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        prefix TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL DEFAULT 'running',
+        config TEXT NOT NULL DEFAULT '{}',
+        container_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`);
+      db.run(`INSERT INTO apps (name, type, prefix, status, config, container_id, created_at, updated_at)
+        SELECT name, type, prefix, status, config, container_id, created_at, updated_at FROM apps_old`);
+      db.run("DROP TABLE apps_old");
+      saveDb();
+      console.log('Migrated apps table: removed old CHECK constraint');
+    }
+  }
 }
 
 export function saveDb(): void {
@@ -41,7 +65,7 @@ export function saveDb(): void {
 
 export interface AppRow {
   name: string;
-  type: 'static' | 'docker';
+  type: 'static' | 'docker' | 'docker-compose';
   prefix: string;
   status: 'running' | 'stopped' | 'error';
   config: string;

@@ -4,6 +4,7 @@ import AdmZip from 'adm-zip';
 import * as db from '../db';
 import * as caddy from './caddy';
 import * as docker from './docker';
+import * as compose from './compose';
 
 export interface AppFile {
   path: string;
@@ -25,11 +26,16 @@ export interface DockerAppConfig {
   mem_limit: string;
 }
 
-export type AppConfig = StaticAppConfig | DockerAppConfig;
+export interface DockerComposeAppConfig {
+  compose_file?: string;
+  services: Record<string, { port: number }>;
+}
+
+export type AppConfig = StaticAppConfig | DockerAppConfig | DockerComposeAppConfig;
 
 export interface AppInput {
   name: string;
-  type: 'static' | 'docker';
+  type: 'static' | 'docker' | 'docker-compose';
   prefix?: string;
   files: AppFile[];
   config?: AppConfig;
@@ -37,14 +43,14 @@ export interface AppInput {
 
 export interface AppOutput {
   name: string;
-  type: 'static' | 'docker';
+  type: 'static' | 'docker' | 'docker-compose';
   prefix: string;
   status: 'running' | 'stopped' | 'error';
   files: AppFile[];
   config: AppConfig;
+  title?: string;
   created_at: string;
   updated_at: string;
-  error_message?: string;
 }
 
 const NAME_REGEX = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
@@ -140,28 +146,79 @@ function isUtf8(buf: Buffer): boolean {
   }
 }
 
+const titleCache = new Map<string, { title: string | null; mtime: number }>();
+
+function extractTitle(name: string, config: AppConfig): string | null {
+  const indexFile = 'index' in config ? (config as StaticAppConfig).index : 'index.html';
+  const indexPath = path.join(appDir(name), indexFile);
+  const pkgPath = path.join(appDir(name), 'package.json');
+
+  // Compute latest mtime across all candidate files for cache invalidation
+  const candidateFiles = [indexPath];
+  let hasPkg = false;
+  try { if (fs.existsSync(pkgPath)) { candidateFiles.push(pkgPath); hasPkg = true; } } catch {}
+
+  const mtime = candidateFiles.reduce((max, f) => {
+    try { return Math.max(max, fs.statSync(f).mtimeMs); } catch { return max; }
+  }, 0);
+
+  const cached = titleCache.get(name);
+  if (cached && cached.mtime === mtime) return cached.title;
+
+  // Try index HTML title
+  try {
+    const content = fs.readFileSync(indexPath, 'utf-8');
+    const match = content.match(/<title>([^<]*)<\/title>/i);
+    if (match) {
+      const title = match[1].trim();
+      titleCache.set(name, { title, mtime });
+      return title;
+    }
+  } catch {}
+
+  // Try package.json name (useful for docker apps)
+  if (hasPkg) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+      if (pkg.name && typeof pkg.name === 'string') {
+        titleCache.set(name, { title: pkg.name, mtime });
+        return pkg.name;
+      }
+    } catch {}
+  }
+
+  titleCache.set(name, { title: null, mtime });
+  return null;
+}
+
 function rowToOutput(row: db.AppRow): AppOutput {
+  const config = JSON.parse(row.config);
   return {
     name: row.name,
     type: row.type,
     prefix: row.prefix,
     status: row.status,
-    config: JSON.parse(row.config),
+    config,
     files: readFiles(row.name),
+    title: extractTitle(row.name, config) || undefined,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
 }
 
-export function listApps(): { name: string; type: string; prefix: string; status: string; created_at: string; updated_at: string }[] {
-  return db.listApps().map(row => ({
-    name: row.name,
-    type: row.type,
-    prefix: row.prefix,
-    status: row.status,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  }));
+export function listApps(): { name: string; type: string; prefix: string; status: string; title?: string; created_at: string; updated_at: string }[] {
+  return db.listApps().map(row => {
+    const config = JSON.parse(row.config);
+    return {
+      name: row.name,
+      type: row.type,
+      prefix: row.prefix,
+      status: row.status,
+      title: extractTitle(row.name, config) || undefined,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+  });
 }
 
 export function getApp(name: string): AppOutput | null {
@@ -197,6 +254,16 @@ export async function createApp(input: AppInput): Promise<AppOutput> {
       await docker.pullImage(dockerConfig.image);
       containerId = await docker.createContainer(input.name, appDir(input.name), dockerConfig);
       await caddy.addDockerRoute(prefix, containerId, dockerConfig.port);
+    } else if (input.type === 'docker-compose') {
+      const composeConfig = config as DockerComposeAppConfig;
+      await compose.composeUp(input.name, composeConfig.services);
+      await addComposeRoutes(prefix, input.name, composeConfig.services);
+      containerId = JSON.stringify(
+        Object.keys(composeConfig.services).reduce((acc, s) => {
+          acc[s] = composeContainerName(input.name, s);
+          return acc;
+        }, {} as Record<string, string>)
+      );
     } else {
       const staticConfig = config as StaticAppConfig;
       await caddy.addStaticRoute(prefix, appDir(input.name), staticConfig.spa, staticConfig.index);
@@ -224,7 +291,7 @@ export async function createApp(input: AppInput): Promise<AppOutput> {
 
 export async function createAppFromZip(
   name: string,
-  type: 'static' | 'docker',
+  type: 'static' | 'docker' | 'docker-compose',
   zipPath: string,
   appConfig?: AppConfig
 ): Promise<AppOutput> {
@@ -260,6 +327,16 @@ export async function createAppFromZip(
       await docker.pullImage(dockerConfig.image);
       containerId = await docker.createContainer(name, dir, dockerConfig);
       await caddy.addDockerRoute(prefix, containerId, dockerConfig.port);
+    } else if (type === 'docker-compose') {
+      const composeConfig = config as DockerComposeAppConfig;
+      await compose.composeUp(name, composeConfig.services);
+      await addComposeRoutes(prefix, name, composeConfig.services);
+      containerId = JSON.stringify(
+        Object.keys(composeConfig.services).reduce((acc, s) => {
+          acc[s] = composeContainerName(name, s);
+          return acc;
+        }, {} as Record<string, string>)
+      );
     } else {
       const staticConfig = config as StaticAppConfig;
       await caddy.addStaticRoute(prefix, dir, staticConfig.spa, staticConfig.index);
@@ -320,6 +397,24 @@ export async function updateAppFromZip(
     const containerId = await docker.createContainer(name, dir, dockerConfig);
     await caddy.addDockerRoute(prefix, containerId, dockerConfig.port);
     updates.container_id = containerId;
+  } else if (existing.type === 'docker-compose') {
+    const existingConfig = JSON.parse(existing.config) as DockerComposeAppConfig;
+    // Remove sub-service routes (main prefix already removed above)
+    const entries = Object.entries(existingConfig.services);
+    for (let i = 1; i < entries.length; i++) {
+      const [serviceName] = entries[i];
+      try { await caddy.removeRoute(`${prefix}/${serviceName}`); } catch {}
+    }
+    await compose.composeDown(name);
+    const composeConfig = (appConfig ? appConfig : existingConfig) as DockerComposeAppConfig;
+    await compose.composeUp(name, composeConfig.services);
+    await addComposeRoutes(prefix, name, composeConfig.services);
+    updates.container_id = JSON.stringify(
+      Object.keys(composeConfig.services).reduce((acc, s) => {
+        acc[s] = composeContainerName(name, s);
+        return acc;
+      }, {} as Record<string, string>)
+    );
   } else {
     const staticConfig = (appConfig ? appConfig : JSON.parse(existing.config)) as StaticAppConfig;
     await caddy.addStaticRoute(prefix, dir, staticConfig.spa, staticConfig.index);
@@ -353,12 +448,20 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
       throw new ValidationError(`Prefix "${newPrefix}" is already in use`);
     }
     // Remove old Caddy route, add new one
-    await caddy.removeRoute(existing.prefix);
+    if (existing.type === 'docker-compose') {
+      const oldComposeConfig = JSON.parse(existing.config) as DockerComposeAppConfig;
+      await removeComposeRoutes(existing.prefix, oldComposeConfig.services);
+    } else {
+      await caddy.removeRoute(existing.prefix);
+    }
 
     if (existing.type === 'docker') {
       const dockerConfig = (input.config ? input.config : JSON.parse(existing.config)) as DockerAppConfig;
       const containerName = docker.containerNameForApp(existing.name);
       await caddy.addDockerRoute(newPrefix, containerName, dockerConfig.port);
+    } else if (existing.type === 'docker-compose') {
+      const composeConfig = (input.config ? input.config : JSON.parse(existing.config)) as DockerComposeAppConfig;
+      await addComposeRoutes(newPrefix, name, composeConfig.services);
     } else {
       const staticConfig = (input.config ? input.config : JSON.parse(existing.config)) as StaticAppConfig;
       await caddy.addStaticRoute(newPrefix, appDir(name), staticConfig.spa, staticConfig.index);
@@ -392,6 +495,23 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
     await caddy.addStaticRoute(prefix, appDir(name), config.spa, config.index);
   }
 
+  // If docker-compose app and config or files changed, restart compose
+  if (existing.type === 'docker-compose' && (input.config || input.files)) {
+    const oldConfig = JSON.parse(existing.config) as DockerComposeAppConfig;
+    const composeConfig = (input.config ? input.config : oldConfig) as DockerComposeAppConfig;
+    const prefix = input.prefix || existing.prefix;
+    await removeComposeRoutes(prefix, oldConfig.services);
+    await compose.composeDown(name);
+    await compose.composeUp(name, composeConfig.services);
+    await addComposeRoutes(prefix, name, composeConfig.services);
+    updates.container_id = JSON.stringify(
+      Object.keys(composeConfig.services).reduce((acc, s) => {
+        acc[s] = composeContainerName(name, s);
+        return acc;
+      }, {} as Record<string, string>)
+    );
+  }
+
   db.updateApp(name, updates);
 
   return rowToOutput(db.getApp(name)!);
@@ -402,18 +522,33 @@ export async function deleteApp(name: string): Promise<void> {
   if (!existing) throw new ValidationError(`App "${name}" not found`);
 
   // Remove Caddy route
-  try {
-    await caddy.removeRoute(existing.prefix);
-  } catch {
-    // Route might not exist, continue
+  if (existing.type === 'docker-compose') {
+    const composeConfig = JSON.parse(existing.config) as DockerComposeAppConfig;
+    try {
+      await removeComposeRoutes(existing.prefix, composeConfig.services);
+    } catch {
+      // Routes might not exist
+    }
+  } else {
+    try {
+      await caddy.removeRoute(existing.prefix);
+    } catch {
+      // Route might not exist, continue
+    }
   }
 
-  // Stop docker container if applicable
+  // Stop containers if applicable
   if (existing.type === 'docker') {
     try {
       await docker.stopContainer(name);
     } catch {
       // Container might already be gone
+    }
+  } else if (existing.type === 'docker-compose') {
+    try {
+      await compose.composeDown(name);
+    } catch {
+      // Compose project might not exist
     }
   }
 
@@ -430,6 +565,10 @@ export async function getLogs(name: string, tail: number): Promise<string> {
 
   if (existing.type === 'docker') {
     return docker.getContainerLogs(name, tail);
+  }
+
+  if (existing.type === 'docker-compose') {
+    return compose.composeLogs(name, tail);
   }
 
   // For static apps, check Caddy access logs
@@ -458,6 +597,10 @@ export async function restartApp(name: string): Promise<AppOutput> {
 
   if (existing.type === 'docker') {
     await docker.restartContainer(name);
+  } else if (existing.type === 'docker-compose') {
+    const config = JSON.parse(existing.config) as DockerComposeAppConfig;
+    await compose.composeDown(name);
+    await compose.composeUp(name, config.services);
   }
 
   return rowToOutput(db.getApp(name)!);
@@ -469,18 +612,33 @@ export async function stopApp(name: string): Promise<AppOutput> {
   if (existing.status === 'stopped') return rowToOutput(existing);
 
   // Remove Caddy route
-  try {
-    await caddy.removeRoute(existing.prefix);
-  } catch {
-    // Route might not exist
+  if (existing.type === 'docker-compose') {
+    const composeConfig = JSON.parse(existing.config) as DockerComposeAppConfig;
+    try {
+      await removeComposeRoutes(existing.prefix, composeConfig.services);
+    } catch {
+      // Route might not exist
+    }
+  } else {
+    try {
+      await caddy.removeRoute(existing.prefix);
+    } catch {
+      // Route might not exist
+    }
   }
 
-  // Stop docker container if applicable
+  // Stop containers if applicable
   if (existing.type === 'docker') {
     try {
       await docker.stopContainer(name);
     } catch {
       // Container might already be gone
+    }
+  } else if (existing.type === 'docker-compose') {
+    try {
+      await compose.composeDown(name);
+    } catch {
+      // Compose project might not exist
     }
   }
 
@@ -504,6 +662,16 @@ export async function startApp(name: string): Promise<AppOutput> {
     const containerId = await docker.createContainer(name, appDir(name), dockerConfig);
     await caddy.addDockerRoute(existing.prefix, containerId, dockerConfig.port);
     updates.container_id = containerId;
+  } else if (existing.type === 'docker-compose') {
+    const composeConfig = config as DockerComposeAppConfig;
+    await compose.composeUp(name, composeConfig.services);
+    await addComposeRoutes(existing.prefix, name, composeConfig.services);
+    updates.container_id = JSON.stringify(
+      Object.keys(composeConfig.services).reduce((acc, s) => {
+        acc[s] = composeContainerName(name, s);
+        return acc;
+      }, {} as Record<string, string>)
+    );
   } else {
     const staticConfig = config as StaticAppConfig;
     await caddy.addStaticRoute(existing.prefix, appDir(name), staticConfig.spa, staticConfig.index);
@@ -532,6 +700,9 @@ export async function syncRoutes(): Promise<void> {
         const dockerConfig = config as DockerAppConfig;
         const containerName = docker.containerNameForApp(row.name);
         await caddy.addDockerRoute(row.prefix, containerName, dockerConfig.port);
+      } else if (row.type === 'docker-compose') {
+        const composeConfig = config as DockerComposeAppConfig;
+        await addComposeRoutes(row.prefix, row.name, composeConfig.services);
       } else {
         const staticConfig = config as StaticAppConfig;
         await caddy.addStaticRoute(row.prefix, appDir(row.name), staticConfig.spa, staticConfig.index);
@@ -543,9 +714,41 @@ export async function syncRoutes(): Promise<void> {
   }
 }
 
-function getDefaultConfig(type: 'static' | 'docker'): AppConfig {
+const COMPOSE_PROJECT_PREFIX = 'ih-';
+
+function composeContainerName(appName: string, serviceName: string): string {
+  return `${COMPOSE_PROJECT_PREFIX}${appName}-${serviceName}`;
+}
+
+async function addComposeRoutes(prefix: string, name: string, services: Record<string, { port: number }>): Promise<void> {
+  const entries = Object.entries(services);
+  for (let i = 0; i < entries.length; i++) {
+    const [serviceName, config] = entries[i];
+    const containerName = composeContainerName(name, serviceName);
+    const servicePrefix = i === 0 ? prefix : `${prefix}/${serviceName}`;
+    await caddy.addDockerRoute(servicePrefix, containerName, config.port);
+  }
+}
+
+async function removeComposeRoutes(prefix: string, services: Record<string, { port: number }>): Promise<void> {
+  const entries = Object.entries(services);
+  for (let i = 0; i < entries.length; i++) {
+    const [serviceName] = entries[i];
+    const servicePrefix = i === 0 ? prefix : `${prefix}/${serviceName}`;
+    try {
+      await caddy.removeRoute(servicePrefix);
+    } catch {
+      // Route might not exist
+    }
+  }
+}
+
+function getDefaultConfig(type: 'static' | 'docker' | 'docker-compose'): AppConfig {
   if (type === 'static') {
     return { index: 'index.html', spa: false };
+  }
+  if (type === 'docker-compose') {
+    return { services: {} };
   }
   return {
     image: 'node:20-alpine',

@@ -1,6 +1,8 @@
 # Intranet Host
 
-A Docker-based system that runs on a NAS and hosts AI-generated web apps under URL prefixes. AI agents deploy and manage apps through a REST API — no manual config.
+A self-hosted platform for running web apps on your own hardware — no cloud, no subscription, no cold starts. Designed from the ground up for **AI agents** to deploy and manage apps through a REST API, but equally usable by humans with curl.
+
+If cloud platforms like Vercel and Netlify optimize for the public internet, and CapRover is a self-hosted PaaS for humans, intranet-host is the thinnest possible layer between *"Claude generated this app"* and *"it's running on my network."* It runs Docker containers on your NAS, serves them behind Caddy, and never touches the cloud — your data stays local, your apps run 24/7 with no cold starts, and the only cost is the hardware you already own.
 
 ## How It Works
 
@@ -17,29 +19,104 @@ AI Agent                        NAS (Docker)
    │ ─────────────────────────────►│  is now live
 ```
 
-## Quick Start
+## Installation
 
 ### Prerequisites
 
-- Docker and Docker Compose
+- Docker and Docker Compose (for Docker-based installs)
+- Node.js 20+ (for npm install)
 - Tailscale on the NAS (or any internal DNS pointing to the Docker host)
 
-### Setup
+---
+
+### Option 1: Docker Compose (recommended)
 
 ```bash
-# Clone and enter the project
+# Clone the repo
+git clone <repo-url> intranet-host
 cd intranet-host
 
-# Set your API key
+# Generate a random API key
 echo "MANAGEMENT_API_KEY=$(openssl rand -hex 32)" > .env
 
-# Start
+# Optional: set landing page title
+echo "TITLE=My Intranet" >> .env
+
+# Start all services
 docker compose up -d
 ```
 
-The management API is available at `http://<nas-hostname>/api/v1`. Apps go under `http://<nas-hostname>/<app-name>`.
+The management API is available at `http://<nas-hostname>/api/v1`. Apps are served at `http://<nas-hostname>/<app-name>`.
 
-### Deploy Your First App
+---
+
+### Option 2: Docker (manual, without Compose)
+
+```bash
+# Create a Docker network
+docker network create intranet-host
+
+# Start Caddy reverse proxy
+docker run -d \
+  --name intranet-host-caddy \
+  --network intranet-host \
+  -p 80:80 \
+  -v intranet-host_data:/data \
+  -v $PWD/Caddyfile:/etc/caddy/Caddyfile:ro \
+  caddy:2-alpine
+
+# Build the management API image
+docker build -t intranet-host-api .
+
+# Start the management API
+docker run -d \
+  --name intranet-host-api \
+  --network intranet-host \
+  -p 3001:3001 \
+  -e MANAGEMENT_API_KEY=$(openssl rand -hex 32) \
+  -e CADDY_ADMIN_URL=http://intranet-host-caddy:2019 \
+  -v intranet-host_data:/data \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  intranet-host-api
+```
+
+---
+
+### Option 3: npm (development / bare metal)
+
+```bash
+# Clone and install
+git clone <repo-url> intranet-host
+cd intranet-host
+npm install
+
+# Start Caddy (required for routing and the landing page)
+# Install caddy from https://caddyserver.com/ or use Docker:
+docker run -d \
+  --name intranet-host-caddy \
+  -p 80:80 \
+  -v intranet-host_data:/data \
+  -v $PWD/Caddyfile:/etc/caddy/Caddyfile:ro \
+  caddy:2-alpine
+
+# Set environment variables
+export MANAGEMENT_API_KEY=my-secret-key
+export CADDY_ADMIN_URL=http://localhost:2019
+export DOCKER_SOCKET=/var/run/docker.sock
+export DATA_DIR=./data
+export TITLE="My Intranet"
+
+# Build and start
+npm run build
+npm start
+```
+
+For development with auto-reload:
+```bash
+npm run dev
+```
+
+## Deploy Your First App
 
 ```bash
 curl -X POST http://localhost/api/v1/apps \
@@ -83,18 +160,35 @@ A container built from your source files. The files are mounted at `/app` and th
 | `cpu_limit` | `0.5` | CPU shares (cores) |
 | `mem_limit` | `128m` | Memory limit |
 
+### Docker Compose
+
+Multiple containers defined in a `docker-compose.yml`. Caddy routes to individual services — the first service in `config.services` gets the main prefix, additional services get sub-prefixes. Best for multi-service apps (web + API + database).
+
+| Config option | Default | Description |
+|---------------|---------|-------------|
+| `compose_file` | `docker-compose.yml` | Compose file name to use |
+| `services` | `{}` | Map of service name to `{ port }` for Caddy routing |
+
+The uploaded files (compose file, Dockerfiles, source) are placed in `/data/apps/<name>/` and `docker compose up -d` starts all services. Internal services like databases that don't need HTTP routing should be omitted from `config.services`.
+
+> If you plan to contribute: `src/services/compose.ts` handles Docker Compose lifecycle, `src/services/docker.ts` handles single-container lifecycle.
+
 ## API Overview
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/v1/apps` | List all apps |
-| `POST` | `/api/v1/apps` | Create an app |
+| `POST` | `/api/v1/apps` | Create an app (JSON) |
+| `POST` | `/api/v1/apps/upload` | Create an app (zip upload) |
 | `GET` | `/api/v1/apps/:name` | Get app details |
 | `PUT` | `/api/v1/apps/:name` | Full update (replace) |
+| `PUT` | `/api/v1/apps/:name/upload` | Update app files (zip) |
 | `PATCH` | `/api/v1/apps/:name` | Partial update |
 | `DELETE` | `/api/v1/apps/:name` | Remove an app |
 | `GET` | `/api/v1/apps/:name/logs` | View logs |
 | `POST` | `/api/v1/apps/:name/restart` | Restart app |
+| `POST` | `/api/v1/apps/:name/stop` | Stop app |
+| `POST` | `/api/v1/apps/:name/start` | Start app |
 | `GET` | `/api/v1/health` | Health check |
 
 All `/apps` endpoints require `Authorization: Bearer <MANAGEMENT_API_KEY>`.
@@ -147,6 +241,7 @@ Full API docs in [api-docs.md](api-docs.md). AI agent usage examples in [skills.
 | `DATA_DIR` | `/data` | SQLite and app files directory |
 | `CADDY_ADMIN_URL` | `http://caddy:2019` | Caddy admin API address |
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker socket path |
+| `TITLE` | `Intranet Host` | Landing page title |
 
 ## Development
 

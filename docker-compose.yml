@@ -28,3 +28,7 @@ services:
 
 volumes:
   app_data:
+
+networks:
+  default:
+    name: intranet-host_default

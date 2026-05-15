@@ -69,7 +69,7 @@ Register a new app. The request includes the app name, type, all source files, a
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | yes | URL-safe slug. Must match `^[a-z0-9]+(-[a-z0-9]+)*$` |
-| `type` | yes | `"static"` or `"docker"` |
+| `type` | yes | `"static"`, `"docker"`, or `"docker-compose"` |
 | `prefix` | no | URL prefix. Defaults to `/<name>` |
 | `files` | yes | Array of `{path, content, encoding?}` objects. For binary files (images, video), set `encoding: "base64"` and base64-encode the content. |
 | `config` | no | Type-specific config (see below) |
@@ -91,6 +91,15 @@ Register a new app. The request includes the app name, type, all source files, a
 | `command` | string | — | Override container command |
 | `cpu_limit` | string | `"0.5"` | CPU shares |
 | `mem_limit` | string | `"128m"` | Memory limit |
+
+**Docker Compose config:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `compose_file` | string | `"docker-compose.yml"` | Compose file name |
+| `services` | object | `{}` | Map of service name to `{ port }` for Caddy routing |
+
+Only services that need HTTP routing should be listed in `services`. The first service gets the main prefix (`/<name>/`), additional services get sub-prefixes (`/<name>/<serviceName>/`). Internal services (databases, caches) stay on the compose internal network and should be omitted.
 
 **Response 201:**
 ```json
@@ -263,7 +272,7 @@ Partial update. Only include the fields you want to change. When `files` is prov
 DELETE /apps/:name
 ```
 
-Removes the app entirely: deletes all files, stops the container (if docker type), and removes the Caddy route. This is irreversible.
+Removes the app entirely: deletes all files, stops the container (if docker or docker-compose type), and removes the Caddy route. This is irreversible.
 
 **Response 204:** No content.
 
@@ -278,7 +287,7 @@ Removes the app entirely: deletes all files, stops the container (if docker type
 GET /apps/:name/logs?tail=100
 ```
 
-Returns recent logs. For static apps, returns Caddy access logs. For docker apps, returns container stdout/stderr.
+Returns recent logs. For static apps, returns Caddy access logs. For docker apps, returns container stdout/stderr. For docker-compose apps, returns logs for all services via `docker compose logs`.
 
 **Query parameters:**
 - `tail` (optional, default `100`) — Number of log lines to return
@@ -298,7 +307,7 @@ Returns recent logs. For static apps, returns Caddy access logs. For docker apps
 POST /apps/:name/restart
 ```
 
-Restarts the app. For static apps this is a no-op (Caddy already serves the files). For docker apps it restarts the container.
+Restarts the app. For static apps this is a no-op. For docker apps it restarts the container. For docker-compose apps it runs `docker compose down` followed by `docker compose up`.
 
 **Response 200:** App object with updated status.
 
