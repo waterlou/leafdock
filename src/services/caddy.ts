@@ -44,6 +44,17 @@ export async function addStaticRoute(prefix: string, appDir: string, spa: boolea
 
   const filtered = routes.filter(r => r['@id'] !== routeId);
 
+  // Redirect exact prefix to prefix/ so relative URLs in HTML resolve correctly
+  const redirectRoute: CaddyRoute = {
+    '@id': routeId + '-root',
+    match: [{ path: [prefix] }],
+    handle: [{
+      handler: 'static_response',
+      status_code: 308,
+      headers: { Location: [prefix + '/'] },
+    }],
+  };
+
   const subRoutes: Record<string, unknown>[] = [
     {
       handle: [{ handler: 'rewrite', strip_path_prefix: prefix }],
@@ -61,13 +72,13 @@ export async function addStaticRoute(prefix: string, appDir: string, spa: boolea
     handle: [{ handler: 'file_server', root: appDir }],
   });
 
-  const route: CaddyRoute = {
+  const serveRoute: CaddyRoute = {
     '@id': routeId,
-    match: [{ path: [prefix, `${prefix}/*`] }],
+    match: [{ path: [`${prefix}/*`] }],
     handle: [{ handler: 'subroute', routes: subRoutes }],
   };
 
-  filtered.unshift(route);
+  filtered.unshift(serveRoute, redirectRoute);
   await setRoutes(filtered);
 }
 
