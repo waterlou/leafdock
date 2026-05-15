@@ -7,6 +7,7 @@ import * as docker from './docker';
 export interface AppFile {
   path: string;
   content: string;
+  encoding?: 'base64';
 }
 
 export interface StaticAppConfig {
@@ -93,7 +94,12 @@ function writeFiles(name: string, files: AppFile[]): void {
     }
 
     fs.mkdirSync(parentDir, { recursive: true });
-    fs.writeFileSync(filePath, file.content, 'utf-8');
+
+    if (file.encoding === 'base64') {
+      fs.writeFileSync(filePath, Buffer.from(file.content, 'base64'));
+    } else {
+      fs.writeFileSync(filePath, file.content, 'utf-8');
+    }
   }
 }
 
@@ -110,15 +116,27 @@ function readFiles(name: string): AppFile[] {
         walk(fullPath);
       } else {
         const relativePath = path.relative(dir, fullPath);
-        files.push({
-          path: relativePath,
-          content: fs.readFileSync(fullPath, 'utf-8'),
-        });
+        const buf = fs.readFileSync(fullPath);
+        // Check if content is valid UTF-8
+        if (isUtf8(buf)) {
+          files.push({ path: relativePath, content: buf.toString('utf-8') });
+        } else {
+          files.push({ path: relativePath, content: buf.toString('base64'), encoding: 'base64' });
+        }
       }
     }
   };
   walk(dir);
   return files;
+}
+
+function isUtf8(buf: Buffer): boolean {
+  try {
+    const decoded = buf.toString('utf-8');
+    return Buffer.from(decoded, 'utf-8').equals(buf);
+  } catch {
+    return false;
+  }
 }
 
 function rowToOutput(row: db.AppRow): AppOutput {

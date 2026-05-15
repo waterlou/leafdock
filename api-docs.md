@@ -71,7 +71,7 @@ Register a new app. The request includes the app name, type, all source files, a
 | `name` | yes | URL-safe slug. Must match `^[a-z0-9]+(-[a-z0-9]+)*$` |
 | `type` | yes | `"static"` or `"docker"` |
 | `prefix` | no | URL prefix. Defaults to `/<name>` |
-| `files` | yes | Array of `{path, content}` objects |
+| `files` | yes | Array of `{path, content, encoding?}` objects. For binary files (images, video), set `encoding: "base64"` and base64-encode the content. |
 | `config` | no | Type-specific config (see below) |
 
 **Static config:**
