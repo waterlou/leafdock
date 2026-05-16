@@ -59,6 +59,12 @@ export async function addStaticRoute(prefix: string, appDir: string, spa: boolea
     {
       handle: [{ handler: 'rewrite', strip_path_prefix: prefix }],
     },
+    // After stripping prefix, root path '/' needs explicit rewrite to index
+    // so the file_server receives a file path, not a directory path
+    {
+      match: [{ path: ['/'] }],
+      handle: [{ handler: 'rewrite', uri: '/' + index }],
+    },
   ];
 
   if (spa) {
