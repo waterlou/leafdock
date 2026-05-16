@@ -416,7 +416,7 @@ export async function updateAppFromZip(
       }, {} as Record<string, string>)
     );
   } else {
-    const staticConfig = (appConfig ? appConfig : JSON.parse(existing.config)) as StaticAppConfig;
+    const staticConfig: StaticAppConfig = { ...getDefaultConfig('static') as StaticAppConfig, ...(appConfig || JSON.parse(existing.config)) };
     await caddy.addStaticRoute(prefix, dir, staticConfig.spa, staticConfig.index);
   }
 
@@ -436,9 +436,10 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
     writeFiles(name, input.files);
   }
 
-  // Update config if provided
+  // Update config if provided — merge with defaults so partial configs don't lose fields
   if (input.config) {
-    updates.config = JSON.stringify(input.config);
+    const defaults = getDefaultConfig(existing.type);
+    updates.config = JSON.stringify({ ...defaults, ...input.config });
   }
 
   // Update prefix if provided
@@ -489,7 +490,7 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
 
   // If static app and config changed with SPA toggle, update route
   if (existing.type === 'static' && (input.config || input.files)) {
-    const config = (input.config ? input.config : JSON.parse(existing.config)) as StaticAppConfig;
+    const config: StaticAppConfig = { ...getDefaultConfig('static') as StaticAppConfig, ...(input.config || JSON.parse(existing.config)) };
     const prefix = input.prefix || existing.prefix;
     await caddy.removeRoute(prefix);
     await caddy.addStaticRoute(prefix, appDir(name), config.spa, config.index);
