@@ -1,4 +1,4 @@
-const CADDY_ADMIN_URL = process.env.CADDY_ADMIN_URL || 'http://caddy:2019';
+const CADDY_ADMIN_URL = process.env.CADDY_ADMIN_URL || 'http://localhost:2019';
 
 interface CaddyRoute {
   match: Array<{ path: string[] }>;

@@ -231,7 +231,7 @@ Full API docs in [api-docs.md](api-docs.md). AI agent usage examples in [skills.
 | `MANAGEMENT_API_KEY` | `change-me` | API key for auth |
 | `PORT` | `3001` | Management API listen port |
 | `DATA_DIR` | `/data` | SQLite and app files directory |
-| `CADDY_ADMIN_URL` | `http://caddy:2019` | Caddy admin API address |
+| `CADDY_ADMIN_URL` | `http://localhost:2019` | Caddy admin API address |
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker socket path |
 | `TITLE` | `Leafdock` | Landing page title |
 

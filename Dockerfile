@@ -1,16 +1,16 @@
 FROM node:20-alpine
 
-ARG TARGETARCH
+# Default amd64 so classic `docker build` works; arm64 set by buildx.
+# Note: arm/v7 is not covered (amd64 fallback) — requires buildx.
+ARG TARGETARCH=amd64
 
 RUN apk add --no-cache docker-cli docker-cli-compose curl && \
     if [ "$TARGETARCH" = "arm64" ]; then \
-        CADDY_FILTER=linux_arm64.tar.gz; \
+        CADDY_ARCH=arm64; \
     else \
-        CADDY_FILTER=linux_amd64.tar.gz; \
+        CADDY_ARCH=amd64; \
     fi && \
-    CADDY_URL=$(curl -fsSL "https://api.github.com/repos/caddyserver/caddy/releases/latest" \
-      | grep browser_download_url | grep "$CADDY_FILTER" | cut -d'"' -f4 | head -1) && \
-    curl -fsSL "$CADDY_URL" -o /tmp/caddy.tar.gz && \
+    curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_linux_${CADDY_ARCH}.tar.gz" -o /tmp/caddy.tar.gz && \
     tar xzf /tmp/caddy.tar.gz -C /usr/local/bin caddy && \
     rm /tmp/caddy.tar.gz && \
     apk del curl

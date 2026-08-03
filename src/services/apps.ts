@@ -67,6 +67,28 @@ function prefixFromName(name: string): string {
   return `/${name}`;
 }
 
+// Index must be a bare filename: no leading '/', no path separators, no '..' traversal.
+// Only static apps serve an index file, so skip other types — a legacy docker/compose
+// row may carry an irrelevant top-level 'index' field that must not block updates.
+function validateStaticConfig(config: AppConfig, type: 'static' | 'docker' | 'docker-compose'): void {
+  if (type !== 'static') return;
+  const { index } = config as StaticAppConfig;
+  if (!index || index.startsWith('/') || /[\\/]/.test(index) || index === '..') {
+    throw new ValidationError(`Invalid index file: ${index}`);
+  }
+}
+
+// Merge defaults < stored config < patch so partial configs never lose stored fields.
+function mergeConfig(
+  type: 'static' | 'docker' | 'docker-compose',
+  stored?: string,
+  patch?: AppConfig
+): AppConfig {
+  const merged = { ...getDefaultConfig(type), ...(stored ? JSON.parse(stored) : {}), ...patch };
+  validateStaticConfig(merged, type);
+  return merged;
+}
+
 export class ValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -227,6 +249,17 @@ export function getApp(name: string): AppOutput | null {
   return rowToOutput(row);
 }
 
+export function downloadAppZip(name: string): Buffer {
+  // Reject '..', '/' etc. before appDir() resolves them against the data dir —
+  // without this, GET /apps/..%2Fzip would zip the whole data directory.
+  validateName(name);
+  const dir = appDir(name);
+  if (!fs.existsSync(dir)) throw new ValidationError(`App "${name}" not found`);
+  const zip = new AdmZip();
+  zip.addLocalFolder(dir);
+  return zip.toBuffer();
+}
+
 export async function createApp(input: AppInput): Promise<AppOutput> {
   validateName(input.name);
 
@@ -241,7 +274,7 @@ export async function createApp(input: AppInput): Promise<AppOutput> {
   }
 
   const now = new Date().toISOString();
-  const config: AppConfig = { ...getDefaultConfig(input.type), ...input.config };
+  const config = mergeConfig(input.type, undefined, input.config);
 
   // Write files to disk
   writeFiles(input.name, input.files);
@@ -317,7 +350,7 @@ export async function createAppFromZip(
   fs.rmSync(zipPath, { force: true });
 
   const now = new Date().toISOString();
-  const config: AppConfig = { ...getDefaultConfig(type), ...appConfig };
+  const config = mergeConfig(type, undefined, appConfig);
 
   let containerId: string | null = null;
 
@@ -379,18 +412,15 @@ export async function updateAppFromZip(
   fs.rmSync(zipPath, { force: true });
 
   const now = new Date().toISOString();
-  const updates: Parameters<typeof db.updateApp>[1] = { updated_at: now };
-
-  if (appConfig) {
-    updates.config = JSON.stringify(appConfig);
-  }
+  const merged = mergeConfig(existing.type, existing.config, appConfig);
+  const updates: Parameters<typeof db.updateApp>[1] = { updated_at: now, config: JSON.stringify(merged) };
 
   // Refresh Caddy route
   const prefix = existing.prefix;
   await caddy.removeRoute(prefix);
 
   if (existing.type === 'docker') {
-    const dockerConfig = (appConfig ? appConfig : JSON.parse(existing.config)) as DockerAppConfig;
+    const dockerConfig = merged as DockerAppConfig;
     const containerName = docker.containerNameForApp(existing.name);
     await docker.stopContainer(name);
     await docker.pullImage(dockerConfig.image);
@@ -406,7 +436,7 @@ export async function updateAppFromZip(
       try { await caddy.removeRoute(`${prefix}/${serviceName}`); } catch {}
     }
     await compose.composeDown(name);
-    const composeConfig = (appConfig ? appConfig : existingConfig) as DockerComposeAppConfig;
+    const composeConfig = merged as DockerComposeAppConfig;
     await compose.composeUp(name, composeConfig.services);
     await addComposeRoutes(prefix, name, composeConfig.services);
     updates.container_id = JSON.stringify(
@@ -416,7 +446,7 @@ export async function updateAppFromZip(
       }, {} as Record<string, string>)
     );
   } else {
-    const staticConfig: StaticAppConfig = { ...getDefaultConfig('static') as StaticAppConfig, ...(appConfig || JSON.parse(existing.config)) };
+    const staticConfig = merged as StaticAppConfig;
     await caddy.addStaticRoute(prefix, dir, staticConfig.spa, staticConfig.index);
   }
 
@@ -431,15 +461,20 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
   const now = new Date().toISOString();
   const updates: Parameters<typeof db.updateApp>[1] = { updated_at: now };
 
+  // Parse + validate stored config only when this update consumes it, so a corrupt
+  // stored config can't break updates that don't touch config (e.g. files or prefix only).
+  const merged: AppConfig | null = input.config || input.files || input.prefix
+    ? mergeConfig(existing.type, existing.config, input.config)
+    : null;
+
   // Update files if provided
   if (input.files) {
     writeFiles(name, input.files);
   }
 
-  // Update config if provided — merge with defaults so partial configs don't lose fields
+  // Update config if provided — merge with defaults and stored config so partial configs don't lose fields
   if (input.config) {
-    const defaults = getDefaultConfig(existing.type);
-    updates.config = JSON.stringify({ ...defaults, ...input.config });
+    updates.config = JSON.stringify(merged);
   }
 
   // Update prefix if provided
@@ -457,15 +492,12 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
     }
 
     if (existing.type === 'docker') {
-      const dockerConfig = (input.config ? input.config : JSON.parse(existing.config)) as DockerAppConfig;
+      const dockerConfig = merged! as DockerAppConfig;
       const containerName = docker.containerNameForApp(existing.name);
       await caddy.addDockerRoute(newPrefix, containerName, dockerConfig.port);
     } else if (existing.type === 'docker-compose') {
-      const composeConfig = (input.config ? input.config : JSON.parse(existing.config)) as DockerComposeAppConfig;
+      const composeConfig = merged! as DockerComposeAppConfig;
       await addComposeRoutes(newPrefix, name, composeConfig.services);
-    } else {
-      const staticConfig = (input.config ? input.config : JSON.parse(existing.config)) as StaticAppConfig;
-      await caddy.addStaticRoute(newPrefix, appDir(name), staticConfig.spa, staticConfig.index);
     }
 
     updates.prefix = newPrefix;
@@ -477,7 +509,7 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
       await docker.restartContainer(name);
     } catch {
       // Container might not exist, recreate it
-      const dockerConfig = input.config as DockerAppConfig;
+      const dockerConfig = merged! as DockerAppConfig;
       await docker.pullImage(dockerConfig.image);
       const containerId = await docker.createContainer(name, appDir(name), dockerConfig);
       updates.container_id = containerId;
@@ -488,18 +520,18 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
     }
   }
 
-  // If static app and config changed with SPA toggle, update route
-  if (existing.type === 'static' && (input.config || input.files)) {
-    const config: StaticAppConfig = { ...getDefaultConfig('static') as StaticAppConfig, ...(input.config || JSON.parse(existing.config)) };
+  // If static app and config, files, or prefix changed, update route
+  if (existing.type === 'static' && (input.config || input.files || newPrefix)) {
+    const staticConfig = merged! as StaticAppConfig;
     const prefix = input.prefix || existing.prefix;
     await caddy.removeRoute(prefix);
-    await caddy.addStaticRoute(prefix, appDir(name), config.spa, config.index);
+    await caddy.addStaticRoute(prefix, appDir(name), staticConfig.spa, staticConfig.index);
   }
 
   // If docker-compose app and config or files changed, restart compose
   if (existing.type === 'docker-compose' && (input.config || input.files)) {
     const oldConfig = JSON.parse(existing.config) as DockerComposeAppConfig;
-    const composeConfig = (input.config ? input.config : oldConfig) as DockerComposeAppConfig;
+    const composeConfig = merged! as DockerComposeAppConfig;
     const prefix = input.prefix || existing.prefix;
     await removeComposeRoutes(prefix, oldConfig.services);
     await compose.composeDown(name);
@@ -653,7 +685,7 @@ export async function startApp(name: string): Promise<AppOutput> {
   if (!existing) throw new ValidationError(`App "${name}" not found`);
   if (existing.status === 'running') return rowToOutput(existing);
 
-  const config = { ...getDefaultConfig(existing.type), ...JSON.parse(existing.config) };
+  const config = mergeConfig(existing.type, existing.config);
   const now = new Date().toISOString();
   const updates: Parameters<typeof db.updateApp>[1] = { status: 'running', config: JSON.stringify(config), updated_at: now };
 
@@ -695,7 +727,7 @@ export async function syncRoutes(): Promise<void> {
 
   const rows = db.listApps();
   for (const row of rows) {
-    const config = JSON.parse(row.config);
+    const config = mergeConfig(row.type, row.config);
     try {
       if (row.type === 'docker') {
         const dockerConfig = config as DockerAppConfig;

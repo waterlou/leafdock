@@ -217,6 +217,27 @@ Returns full details including all files and config.
 
 ---
 
+### Download App (Zip)
+
+```
+GET /apps/:name/zip
+```
+
+Downloads the app's source files as a `.zip` archive. Useful for pulling a deployed project down to edit locally, then re-uploading via `PUT /apps/:name/upload`. Files are at the zip root (same layout the upload expects).
+
+**Response 200:** `application/zip` binary stream, `Content-Disposition: attachment; filename="<name>.zip"`.
+
+**Errors:**
+- `404` — App not found
+
+**cURL example:**
+```bash
+curl -o app.zip https://nas.ts.net/api/v1/apps/photo-gallery/zip \
+  -H "Authorization: Bearer $API_KEY"
+```
+
+---
+
 ### Update App (Full)
 
 ```

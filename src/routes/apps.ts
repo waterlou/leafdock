@@ -136,6 +136,19 @@ router.delete('/:name', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/v1/apps/:name/zip
+router.get('/:name/zip', (req: Request, res: Response) => {
+  try {
+    const name = param(req, 'name');
+    const buf = apps.downloadAppZip(name);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${name}.zip"`);
+    res.send(buf);
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
 // GET /api/v1/apps/:name/logs
 router.get('/:name/logs', async (req: Request, res: Response) => {
   try {
