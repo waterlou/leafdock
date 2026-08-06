@@ -51,12 +51,18 @@ router.post('/upload', uploadMiddleware, async (req: Request, res: Response) => 
       return;
     }
 
+    if (config.icon !== undefined && typeof config.icon !== 'string') {
+      res.status(400).json({ error: { code: 'validation_error', message: '"icon" must be a string.' } });
+      return;
+    }
+
     const app = await apps.createAppFromZip(
       config.name,
       config.type,
       files.file[0].path,
       config.config,
-      config.folder
+      config.folder,
+      config.icon
     );
     res.status(201).json(app);
   } catch (err) {
@@ -75,12 +81,19 @@ router.put('/:name/upload', uploadMiddleware, async (req: Request, res: Response
     }
 
     let config: apps.AppConfig | undefined;
+    let icon: string | undefined;
     if (req.body?.config) {
       const body = JSON.parse(req.body.config);
       config = body.config;
+      icon = body.icon;
     }
 
-    const app = await apps.updateAppFromZip(name, files.file[0].path, config);
+    if (icon !== undefined && typeof icon !== 'string') {
+      res.status(400).json({ error: { code: 'validation_error', message: '"icon" must be a string.' } });
+      return;
+    }
+
+    const app = await apps.updateAppFromZip(name, files.file[0].path, config, icon);
     res.json(app);
   } catch (err) {
     handleError(res, err);

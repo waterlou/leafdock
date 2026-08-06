@@ -40,6 +40,7 @@ export interface AppInput {
   folder?: string;
   files: AppFile[];
   config?: AppConfig;
+  icon?: string;
 }
 
 export interface AppOutput {
@@ -50,6 +51,7 @@ export interface AppOutput {
   status: 'running' | 'stopped' | 'error';
   files: AppFile[];
   config: AppConfig;
+  icon: string;
   title?: string;
   created_at: string;
   updated_at: string;
@@ -63,6 +65,20 @@ function validateName(name: string): void {
       'Name must be lowercase letters, numbers, and hyphens. Must start with a letter.'
     );
   }
+}
+
+// Emoji + flags + skin tones + ZWJ sequences only. Rejects every HTML-injectable
+// character — the landing page renders icons via innerHTML. Keycap sequences
+// (digit + FE0F + 20E3) are deliberately rejected; pick another emoji instead.
+const ICON_REGEX = /^[\p{Extended_Pictographic}\p{Regional_Indicator}\p{Emoji_Modifier}\u200D\uFE0F\u20E3]+$/u;
+
+function validateIcon(icon: string): string {
+  const trimmed = icon.trim();
+  if (trimmed === '') return '';
+  if (!ICON_REGEX.test(trimmed)) {
+    throw new ValidationError('Invalid icon: must be an emoji');
+  }
+  return trimmed;
 }
 
 function prefixFromName(name: string): string {
@@ -279,6 +295,7 @@ function rowToOutput(row: db.AppRow): AppOutput {
     folder: folderFromPrefix(row.prefix),
     status: row.status,
     config,
+    icon: row.icon,
     files: readFiles(row.name, folderFromPrefix(row.prefix)),
     title: extractTitle(row.name, config) || undefined,
     created_at: row.created_at,
@@ -286,7 +303,7 @@ function rowToOutput(row: db.AppRow): AppOutput {
   };
 }
 
-export function listApps(): { name: string; type: string; prefix: string; folder: string; status: string; title?: string; created_at: string; updated_at: string }[] {
+export function listApps(): { name: string; type: string; prefix: string; folder: string; status: string; icon: string; title?: string; created_at: string; updated_at: string }[] {
   return db.listApps().map(row => {
     const config = JSON.parse(row.config);
     return {
@@ -295,6 +312,7 @@ export function listApps(): { name: string; type: string; prefix: string; folder
       prefix: row.prefix,
       folder: folderFromPrefix(row.prefix),
       status: row.status,
+      icon: row.icon,
       title: extractTitle(row.name, config) || undefined,
       created_at: row.created_at,
       updated_at: row.updated_at,
@@ -334,6 +352,8 @@ export async function createApp(input: AppInput): Promise<AppOutput> {
     ? (folder ? `/${folder}/${input.name}` : `/${input.name}`)
     : normalizePrefix(input.prefix || prefixFromName(input.name));
   folder = folderFromPrefix(prefix);
+
+  const icon = input.icon !== undefined ? validateIcon(input.icon) : '';
 
   if (db.appExists(input.name)) {
     throw new ValidationError(`App "${input.name}" already exists`);
@@ -382,6 +402,7 @@ export async function createApp(input: AppInput): Promise<AppOutput> {
     status: 'running',
     config: JSON.stringify(config),
     container_id: containerId,
+    icon,
     created_at: now,
     updated_at: now,
   };
@@ -395,10 +416,12 @@ export async function createAppFromZip(
   type: 'static' | 'docker' | 'docker-compose',
   zipPath: string,
   appConfig?: AppConfig,
-  folder?: string
+  folder?: string,
+  icon?: string
 ): Promise<AppOutput> {
   validateName(name);
 
+  const iconNorm = icon !== undefined ? validateIcon(icon) : '';
   const folderNorm = validateFolder(folder ?? '');
   const prefix = folderNorm ? `/${folderNorm}/${name}` : `/${name}`;
 
@@ -454,6 +477,7 @@ export async function createAppFromZip(
     status: 'running',
     config: JSON.stringify(config),
     container_id: containerId,
+    icon: iconNorm,
     created_at: now,
     updated_at: now,
   };
@@ -465,7 +489,8 @@ export async function createAppFromZip(
 export async function updateAppFromZip(
   name: string,
   zipPath: string,
-  appConfig?: AppConfig
+  appConfig?: AppConfig,
+  icon?: string
 ): Promise<AppOutput> {
   const existing = db.getApp(name);
   if (!existing) throw new ValidationError(`App "${name}" not found`);
@@ -482,6 +507,7 @@ export async function updateAppFromZip(
   const now = new Date().toISOString();
   const merged = mergeConfig(existing.type, existing.config, appConfig);
   const updates: Parameters<typeof db.updateApp>[1] = { updated_at: now, config: JSON.stringify(merged) };
+  if (icon !== undefined) updates.icon = validateIcon(icon);
 
   // Refresh Caddy route
   const prefix = existing.prefix;
@@ -603,6 +629,8 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
 
   const now = new Date().toISOString();
   const updates: Parameters<typeof db.updateApp>[1] = { updated_at: now };
+
+  if (input.icon !== undefined) updates.icon = validateIcon(input.icon);
 
   // Resolve the move target: folder and prefix are two views of one location
   let newPrefix: string | null = null;

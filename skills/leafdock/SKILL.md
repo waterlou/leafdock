@@ -5,7 +5,7 @@ description: Deploy and manage web apps on an internal Docker host via REST API.
 
 You have access to **Leafdock** — a Docker-based system that runs on the user's NAS and serves web apps under URL prefixes (e.g., `https://nas.ts.net/my-app`). You can deploy, update, list, and remove apps through its management API.
 
-Apps can live in **subfolders**: an app in folder `blog` is served at `https://nas.ts.net/blog/my-app` and stored on disk at `/data/apps/blog/<name>`. The landing page groups apps under their folder names. Folders can nest (`blog/tutorials`), and each folder segment follows the app-name rules (lowercase letters, digits, hyphens).
+Apps can live in **subfolders**: an app in folder `blog` is served at `https://nas.ts.net/blog/my-app` and stored on disk at `/data/apps/blog/<name>`. The landing page shows only the current folder's apps and its immediate subfolders — click a folder to drill into it, and use the Back / Root buttons to navigate out (Root appears when more than one level deep). Folders can nest (`blog/tutorials`), and each folder segment follows the app-name rules (lowercase letters, digits, hyphens).
 
 ## Configuration
 
@@ -72,19 +72,19 @@ Content-Type: `application/json` (for text-only apps) or `multipart/form-data` (
 ### List Apps
 ```
 GET /apps
-→ { apps: [{ name, type, prefix, folder, status, created_at, updated_at }] }
+→ { apps: [{ name, type, prefix, folder, status, icon, created_at, updated_at }] }
 ```
 
 ### Get App
 ```
 GET /apps/:name
-→ { name, type, prefix, folder, status, files: [{path, content}], config, created_at, updated_at }
+→ { name, type, prefix, folder, status, files: [{path, content}], config, icon, created_at, updated_at }
 ```
 
 ### Create App
 ```
 POST /apps
-Body: { name, type, files: [{path, content}], config?, prefix?, folder? }
+Body: { name, type, files: [{path, content}], config?, prefix?, folder?, icon? }
 → 201 + full app object
 Errors: 409 name exists, 400 invalid name or prefix conflict
 ```
@@ -102,7 +102,7 @@ POST /apps/upload
 Multipart: file=@app.zip, config='{"name":"my-app","type":"static","config":{"spa":true}}'
 → 201 + full app object
 ```
-**Always use this method when the app has images, fonts, videos, or any binary files.** Send the entire app as a `.zip` file. The `config` field is a JSON string containing `name`, `type`, and optional `config`, `prefix`, and `folder` (same semantics as JSON create; `folder` puts the app in a subfolder, e.g. `"blog"`). The zip contents become the app's file structure.
+**Always use this method when the app has images, fonts, videos, or any binary files.** Send the entire app as a `.zip` file. The `config` field is a JSON string containing `name`, `type`, and optional `config`, `prefix`, `folder`, and `icon` (same semantics as JSON create; `folder` puts the app in a subfolder, e.g. `"blog"`; `icon` sets the emoji shown next to the app name on the landing page). The zip contents become the app's file structure.
 
 cURL example:
 ```bash
@@ -122,7 +122,7 @@ Multipart: file=@app.zip, config?='{"config":{"spa":false}}'
 ### Create App (JSON — text-only apps)
 ```
 POST /apps
-Body: { name, type, files: [{path, content}], config?, prefix?, folder? }
+Body: { name, type, files: [{path, content}], config?, prefix?, folder?, icon? }
 → 201 + full app object
 Errors: 409 name exists, 400 invalid name or prefix conflict
 ```
@@ -138,7 +138,7 @@ Body: { name, type, files: [{path, content}], config? }
 ### Update App (partial)
 ```
 PATCH /apps/:name
-Body: { config? } or { files? } or { prefix? } or { folder? }
+Body: { config? } or { files? } or { prefix? } or { folder? } or { icon? }
 → 200 + updated app object
 ```
 Providing `files` replaces ALL files. Providing `config` merges at the top level. `prefix` or `folder` **moves** the app: files are relocated on disk, the route is swapped, and docker / docker-compose containers are recreated. Give one or the other, not both.
@@ -321,6 +321,7 @@ Errors return: `{ error: { code, message } }`
 ## Tips
 
 - **After generating code, deploy immediately.** The user wants to see their app live. Don't ask permission — just deploy and give them the URL.
+- **Set an emoji `icon` (e.g. `"🚀"`) on every app.** It renders next to the app name on the landing page, so apps are recognizable at a glance. Any single emoji works (flags, skin tones, family ZWJ sequences); `icon` is optional and defaults to none.
 - **If 409 on create, use PUT to update.** The app already exists, just replace it with the new version.
 - **Use SPA mode for React/Vue/Svelte apps.** Set `config.spa: true` so client-side routing works.
 - **Docker apps take longer to start** (image pull + npm install). Tell the user it may take 30-60 seconds.

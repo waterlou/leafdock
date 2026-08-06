@@ -46,9 +46,17 @@ function ensureLandingPage(): void {
   .apps { list-style: none; text-align: left; }
   .apps li { padding: 12px 16px; border: 1px solid var(--card-border); border-radius: 8px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
   .apps li:hover { background: var(--hover); }
-  .folder-header { color: var(--muted); font-weight: 600; font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; padding: 8px 16px 4px; }
+  .nav-row { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .nav-btn { background: var(--select-bg); border: 1px solid var(--select-border); color: var(--fg); padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+  .nav-btn:hover { border-color: var(--link); }
+  .nav-path { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .folder-row { color: var(--muted); font-weight: 600; font-size: 13px; cursor: pointer; }
+  .folder-row::before { content: '▸'; color: var(--muted); font-size: 11px; }
+  .folder-row:hover { color: var(--link); }
+  .folder-row:hover::before { color: var(--link); }
   .app-name { color: var(--link); font-weight: 600; text-decoration: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: left; }
   .app-name:hover { text-decoration: underline; }
+  .app-icon { font-size: 16px; flex-shrink: 0; }
   .app-info { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
   .app-type { color: var(--muted); font-size: 12px; background: var(--tag-bg); padding: 2px 8px; border-radius: 4px; }
   .status { font-size: 12px; }
@@ -82,6 +90,11 @@ function ensureLandingPage(): void {
     </div>
     <button class="edit-btn" id="edit-btn">Edit</button>
   </div>
+  <div class="nav-row" id="nav-row" style="display:none">
+    <button class="nav-btn" id="back-btn">&#8592; Back</button>
+    <button class="nav-btn" id="root-btn">Root</button>
+    <span class="nav-path" id="nav-path"></span>
+  </div>
   <p>Your apps are listed below.</p>
   <div id="app-list" class="loading">Loading apps...</div>
 </div>
@@ -97,10 +110,32 @@ var moonSVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" strok
 
 var appsData = [];
 var editing = false;
+var currentFolder = '';
+
+function parentFolder(folder) {
+  var i = folder.lastIndexOf('/');
+  return i === -1 ? '' : folder.slice(0, i);
+}
+
+// Immediate subfolders of 'folder' (one level only), as full paths from root.
+function childFolders(apps, folder) {
+  var seen = {};
+  var out = [];
+  apps.forEach(function(a) {
+    var f = a.folder || '';
+    if (f === folder) return;
+    var rest = folder === '' ? f : (f.indexOf(folder + '/') === 0 ? f.slice(folder.length + 1) : null);
+    if (rest === null) return;
+    var first = rest.split('/')[0];
+    if (!seen[first]) { seen[first] = true; out.push(first); }
+  });
+  return out.map(function(seg) { return folder === '' ? seg : folder + '/' + seg; }).sort();
+}
 
 function appItemHtml(a, depth) {
   var pad = 28 + (depth || 0) * 16;
   return '<li style="padding-left:' + pad + 'px">' +
+    (a.icon ? '<span class="app-icon">' + a.icon + '</span>' : '') +
     '<a href="' + a.prefix + '/" class="app-name">' + (a.title || a.name) + '</a>' +
     '<span class="app-info"><span class="app-type">' + a.type + '</span> <span class="status ' + a.status + '"' + (editing ? ' data-action="toggle-status" data-name="' + a.name + '"' : '') + '>' + a.status + '</span></span>' +
     '<span class="app-actions">' +
@@ -109,36 +144,46 @@ function appItemHtml(a, depth) {
     '</span></li>';
 }
 
+function folderRowHtml(folder, depth) {
+  var name = folder.split('/').pop();
+  var pad = 12 + (depth || 0) * 16;
+  return '<li class="folder-row" data-folder="' + folder + '" style="padding-left:' + pad + 'px">' + name + '</li>';
+}
+
+// Render the current folder level only: apps that live directly in it, plus
+// its immediate subfolders as clickable rows. Clicking a folder drills in.
 function renderApps(container, apps, sortBy) {
   appsData = apps;
   var filtered = editing ? apps : apps.filter(function(a) { return a.status === 'running'; });
-  var sorted = filtered.slice().sort(function(a, b) {
+  var here = filtered.filter(function(a) { return (a.folder || '') === currentFolder; });
+  var folders = childFolders(filtered, currentFolder);
+  var depth = currentFolder === '' ? 0 : currentFolder.split('/').length;
+  var sorted = here.slice().sort(function(a, b) {
     if (sortBy === 'name') return (a.title || a.name).localeCompare(b.title || b.name);
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   });
-  if (sorted.length === 0) {
+  updateNav();
+  if (sorted.length === 0 && folders.length === 0) {
     container.innerHTML = '<div class="empty">' + (editing ? 'No apps. Deploy one using the API.' : 'No apps deployed yet.') + '</div>';
     return;
   }
-  // Group by folder: root apps first (no header), then folders sorted by name.
-  // Depth = folder segment count, so nested folders indent further.
-  var groups = {};
-  sorted.forEach(function(a) {
-    var f = a.folder || '';
-    if (!groups[f]) groups[f] = [];
-    groups[f].push(a);
-  });
-  var folderNames = Object.keys(groups).filter(function(f) { return f !== ''; })
-    .sort(function(a, b) { return a.localeCompare(b); });
   var html = '<ul class="apps' + (editing ? ' editing' : '') + '">';
-  (groups[''] || []).forEach(function(a) { html += appItemHtml(a, 0); });
-  folderNames.forEach(function(folder) {
-    var depth = folder.split('/').length;
-    html += '<li class="folder-header" style="padding-left:' + (12 + depth * 16) + 'px">' + folder + '</li>';
-    groups[folder].forEach(function(a) { html += appItemHtml(a, depth); });
-  });
+  folders.forEach(function(folder) { html += folderRowHtml(folder, depth); });
+  sorted.forEach(function(a) { html += appItemHtml(a, depth); });
   html += '</ul>';
   container.innerHTML = html;
+}
+
+function updateNav() {
+  var nav = document.getElementById('nav-row');
+  if (!nav) return;
+  if (currentFolder === '') {
+    nav.style.display = 'none';
+    return;
+  }
+  nav.style.display = 'flex';
+  document.getElementById('root-btn').style.display = currentFolder.indexOf('/') !== -1 ? 'inline-block' : 'none';
+  document.getElementById('nav-path').textContent = currentFolder;
 }
 
 function getKey() { return localStorage.getItem('apiKey') || ''; }
@@ -160,6 +205,16 @@ document.getElementById('edit-btn').onclick = function() {
   if (items) renderApps(items, appsData, getSort());
 };
 
+document.getElementById('back-btn').onclick = function() {
+  currentFolder = parentFolder(currentFolder);
+  renderApps(document.getElementById('app-list-items'), appsData, getSort());
+};
+
+document.getElementById('root-btn').onclick = function() {
+  currentFolder = '';
+  renderApps(document.getElementById('app-list-items'), appsData, getSort());
+};
+
 document.getElementById('sort-group').onclick = function(e) {
   var btn = e.target.closest('button');
   if (!btn) return;
@@ -171,6 +226,11 @@ document.getElementById('sort-group').onclick = function(e) {
 
 document.getElementById('app-list').addEventListener('click', function(e) {
   var btn = e.target;
+  if (btn.classList.contains('folder-row')) {
+    currentFolder = btn.getAttribute('data-folder');
+    renderApps(document.getElementById('app-list-items'), appsData, getSort());
+    return;
+  }
   if (btn.classList.contains('del-btn')) {
     var name = btn.getAttribute('data-name');
     if (!confirm('Delete "' + name + '"? This cannot be undone.')) return;

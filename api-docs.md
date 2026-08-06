@@ -32,6 +32,7 @@ Returns a summary list of all registered apps (without file contents).
       "prefix": "/todo-app",
       "folder": "",
       "status": "running",
+      "icon": "",
       "created_at": "2026-05-14T10:00:00Z",
       "updated_at": "2026-05-14T10:00:00Z"
     }
@@ -75,6 +76,7 @@ Register a new app. The request includes the app name, type, all source files, a
 | `folder` | no | Optional subfolder (e.g. `"blog"` or `"blog/tutorials"`). Mutually exclusive with `prefix`. `""` (or omitted) = root. The disk layout mirrors it: an app in folder `blog` lives at `<data>/apps/blog/<name>` and is served at `/blog/<name>/`. |
 | `files` | yes | Array of `{path, content, encoding?}` objects. For binary files (images, video), set `encoding: "base64"` and base64-encode the content. |
 | `config` | no | Type-specific config (see below) |
+| `icon` | no | Optional emoji shown next to the app name on the landing page (e.g. `"🚀"`). Single emoji including flags, skin tones, and ZWJ families; `""` (or omitted) = none. |
 
 **Static config:**
 
@@ -111,6 +113,7 @@ Only services that need HTTP routing should be listed in `services`. The first s
   "prefix": "/todo-app",
   "folder": "",
   "status": "running",
+  "icon": "",
   "files": [
     { "path": "index.html", "content": "<!DOCTYPE html>..." },
     { "path": "style.css", "content": "body { margin: 0; }" },
@@ -150,6 +153,7 @@ The `config` field is a text field containing a JSON object:
   "name": "photo-gallery",
   "type": "static",
   "folder": "blog",
+  "icon": "🚀",
   "config": {
     "index": "index.html",
     "spa": true
@@ -157,7 +161,7 @@ The `config` field is a text field containing a JSON object:
 }
 ```
 
-The config JSON supports the same fields as the JSON Create App endpoint, except `files` (they come from the zip) and `prefix` (auto-derived from name). `folder` is supported: it selects the subfolder (same semantics as JSON create), otherwise the app is created at the root.
+The config JSON supports the same fields as the JSON Create App endpoint, except `files` (they come from the zip) and `prefix` (auto-derived from name). `folder` is supported: it selects the subfolder (same semantics as JSON create), otherwise the app is created at the root. `icon` is supported: sets the emoji shown next to the app name on the landing page.
 
 **Response 201:** Full app object (same shape as JSON create).
 
@@ -188,7 +192,7 @@ Replace an existing app's files by uploading a new zip. Optionally update the co
 | Field | Required | Description |
 |-------|----------|-------------|
 | `file` | yes | `.zip` file containing the updated source files |
-| `config` | no | Optional JSON string with updated configuration |
+| `config` | no | Optional JSON string with updated configuration. May include `icon` to change the emoji shown next to the app name on the landing page. |
 
 **Response 200:** Updated app object.
 
@@ -267,6 +271,8 @@ PATCH /apps/:name
 ```
 
 Partial update. Only include the fields you want to change. When `files` is provided, it replaces ALL files (does not merge with existing).
+
+`icon` is accepted and is pure metadata — it only changes the emoji shown next to the app name on the landing page; no container or route restart happens (e.g. `{ "icon": "📚" }`).
 
 **Request body (example — change SPA mode only):**
 ```json

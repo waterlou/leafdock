@@ -24,6 +24,7 @@ export async function initDb(dataDir: string): Promise<void> {
       status TEXT NOT NULL DEFAULT 'running',
       config TEXT NOT NULL DEFAULT '{}',
       container_id TEXT,
+      icon TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
@@ -54,6 +55,15 @@ export async function initDb(dataDir: string): Promise<void> {
       console.log('Migrated apps table: removed old CHECK constraint');
     }
   }
+
+  // Migration: add icon column to existing databases (the CHECK migration above
+  // recreates the table without it, so this must run after either schema path).
+  const cols = db.exec("PRAGMA table_info(apps)")[0].values.map(r => r[1] as string);
+  if (!cols.includes('icon')) {
+    db.run("ALTER TABLE apps ADD COLUMN icon TEXT NOT NULL DEFAULT ''");
+    saveDb();
+    console.log('Migrated apps table: added icon column');
+  }
 }
 
 export function saveDb(): void {
@@ -70,6 +80,7 @@ export interface AppRow {
   status: 'running' | 'stopped' | 'error';
   config: string;
   container_id: string | null;
+  icon: string;
   created_at: string;
   updated_at: string;
 }
@@ -102,13 +113,13 @@ export function appExists(name: string): boolean {
 
 export function createApp(app: AppRow): void {
   db.run(
-    'INSERT INTO apps (name, type, prefix, status, config, container_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [app.name, app.type, app.prefix, app.status, app.config, app.container_id, app.created_at, app.updated_at]
+    'INSERT INTO apps (name, type, prefix, status, config, container_id, icon, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [app.name, app.type, app.prefix, app.status, app.config, app.container_id, app.icon, app.created_at, app.updated_at]
   );
   saveDb();
 }
 
-export function updateApp(name: string, updates: Partial<Pick<AppRow, 'status' | 'config' | 'container_id' | 'prefix'>> & { updated_at: string }): void {
+export function updateApp(name: string, updates: Partial<Pick<AppRow, 'status' | 'config' | 'container_id' | 'prefix' | 'icon'>> & { updated_at: string }): void {
   const setClauses: string[] = [];
   const values: (string | null)[] = [];
 
