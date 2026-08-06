@@ -133,6 +133,7 @@ Apps can live in subfolders: an app in folder `blog` is served at `http://<nas-h
 - **Create in a folder** — add `"folder": "blog"` to the create payload (`""` or omitted = root; mutually exclusive with `prefix`, which sets the full URL instead)
 - **Move** — `POST /api/v1/apps/:name/move` with body `{"folder": "blog"}` (`{"folder": ""}` moves back to root)
 - **Display labels** — `PUT /api/v1/folders/:path` with `{"label":"New Demo"}` sets a human-readable folder name for the landing page; the URL and on-disk directory keep the slug (`new-demo`). `{"label":""}` clears it.
+- **Deep links** — folders have their own URL: visiting `http://<nas-hostname>/new-demo` opens the folder view directly, and browser Back/Forward navigate between folders.
 - Folders follow per segment: lowercase letters, digits, hyphens, starting with a letter. Input case is normalized — `Demo` is accepted but stored and shown as `demo`, matching the URL. Folders cannot shadow or be shadowed by an existing app's URL tree
 
 ## App Types

@@ -124,6 +124,33 @@ function parentFolder(folder) {
   return i === -1 ? '' : folder.slice(0, i);
 }
 
+// The current folder from the URL path ('/new-demo/guides' -> 'new-demo/guides',
+// '' at root). App paths never collide with folder paths: an app at the exact
+// folder prefix would be a tree conflict at creation.
+function folderFromPath() {
+  var p = decodeURIComponent(location.pathname);
+  while (p.length > 1 && p.charAt(p.length - 1) === '/') p = p.slice(0, -1);
+  if (!p || p === '/') return '';
+  return p.charAt(0) === '/' ? p.slice(1) : p;
+}
+
+// A folder URL is only meaningful when some app lives in it (or nested under it).
+function validFolder(folder) {
+  return (appsData || []).some(function(a) {
+    var f = a.folder || '';
+    return f === folder || f.indexOf(folder + '/') === 0;
+  });
+}
+
+// Navigate + keep the URL in sync so folders are deep-linkable and browser
+// Back works.
+function goToFolder(folder) {
+  currentFolder = folder;
+  var url = folder === '' ? '/' : '/' + folder;
+  if (location.pathname !== url) history.pushState(null, '', url);
+  renderApps(document.getElementById('app-list-items'), appsData, getSort());
+}
+
 // Immediate subfolders of 'folder' (one level only), as full paths from root.
 function childFolders(apps, folder) {
   var seen = {};
@@ -228,13 +255,11 @@ document.getElementById('edit-btn').onclick = function() {
 };
 
 document.getElementById('back-btn').onclick = function() {
-  currentFolder = parentFolder(currentFolder);
-  renderApps(document.getElementById('app-list-items'), appsData, getSort());
+  goToFolder(parentFolder(currentFolder));
 };
 
 document.getElementById('root-btn').onclick = function() {
-  currentFolder = '';
-  renderApps(document.getElementById('app-list-items'), appsData, getSort());
+  goToFolder('');
 };
 
 document.getElementById('sort-group').onclick = function(e) {
@@ -246,11 +271,16 @@ document.getElementById('sort-group').onclick = function(e) {
   if (items) renderApps(items, appsData, getSort());
 };
 
+window.addEventListener('popstate', function() {
+  var folder = folderFromPath();
+  currentFolder = folder !== '' && validFolder(folder) ? folder : '';
+  renderApps(document.getElementById('app-list-items'), appsData, getSort());
+});
+
 document.getElementById('app-list').addEventListener('click', function(e) {
   var btn = e.target;
   if (btn.classList.contains('folder-row')) {
-    currentFolder = btn.getAttribute('data-folder');
-    renderApps(document.getElementById('app-list-items'), appsData, getSort());
+    goToFolder(btn.getAttribute('data-folder'));
     return;
   }
   if (btn.classList.contains('del-btn')) {
@@ -312,10 +342,16 @@ fetch('/api/v1/apps', { headers: authHeaders() })
   .then(function(r) { if (r.status === 401) throw new Error('auth'); return r.json(); })
   .then(function(data) {
     folderLabels = data.folder_labels || {};
+    var fetched = data.apps || [];
+    var initial = folderFromPath();
+    currentFolder = initial !== '' && fetched.some(function(a) {
+      var f = a.folder || '';
+      return f === initial || f.indexOf(initial + '/') === 0;
+    }) ? initial : '';
     var list = document.getElementById('app-list');
     list.innerHTML = '<div id="app-list-items"></div>';
     var items = document.getElementById('app-list-items');
-    renderApps(items, data.apps || [], 'date');
+    renderApps(items, fetched, 'date');
   })
   .catch(function(e) {
     var list = document.getElementById('app-list');
