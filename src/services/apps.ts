@@ -31,7 +31,14 @@ export interface DockerComposeAppConfig {
   services: Record<string, { port: number }>;
 }
 
-export type AppConfig = StaticAppConfig | DockerAppConfig | DockerComposeAppConfig;
+// Optional on every type: relative directories inside the app dir that must
+// survive file replacement (SQLite DBs, uploads, ...). Moved aside during
+// update, restored after extraction.
+export interface PreserveDirsConfig {
+  preserve_dirs?: string[];
+}
+
+export type AppConfig = (StaticAppConfig | DockerAppConfig | DockerComposeAppConfig) & PreserveDirsConfig;
 
 export interface AppInput {
   name: string;
@@ -102,9 +109,72 @@ function mergeConfig(
   stored?: string,
   patch?: AppConfig
 ): AppConfig {
+  if (patch?.preserve_dirs !== undefined) validatePreserveDirs(patch.preserve_dirs);
   const merged = { ...getDefaultConfig(type), ...(stored ? JSON.parse(stored) : {}), ...patch };
   validateStaticConfig(merged, type);
   return merged;
+}
+
+// Relative dir paths only: no absolute paths, no traversal, no backslashes.
+function validatePreserveDirs(dirs: unknown): void {
+  if (!Array.isArray(dirs)) {
+    throw new ValidationError('"preserve_dirs" must be an array of directory paths.');
+  }
+  if (dirs.length > 20) {
+    throw new ValidationError('"preserve_dirs" must have at most 20 entries.');
+  }
+  for (const d of dirs) {
+    if (typeof d !== 'string' || d === '' || d.startsWith('/') || d.includes('\\')) {
+      throw new ValidationError(`Invalid preserve_dirs entry: ${JSON.stringify(d)}`);
+    }
+    const segments = d.split('/');
+    if (segments.some(s => s === '..' || s === '.')) {
+      throw new ValidationError(`Invalid preserve_dirs entry: ${d}`);
+    }
+  }
+}
+
+// Move runtime-data dirs aside, run `body` (which replaces the app dir), then
+// move them back into `targetDir`. On failure the dirs are restored anyway.
+function withPreservedDirs(sourceDir: string, targetDir: string, preserveDirs: string[], body: () => void): void {
+  if (preserveDirs.length === 0) {
+    body();
+    return;
+  }
+  const tmp = path.join(
+    path.dirname(sourceDir),
+    `.preserve-${path.basename(sourceDir)}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+  const moved: Array<{ from: string; to: string }> = [];
+  const restore = (dir: string) => {
+    for (const m of moved) {
+      try {
+        const dest = path.join(dir, path.relative(sourceDir, m.from));
+        if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true });
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.renameSync(m.to, dest);
+      } catch {
+        // best effort — never let restore failures mask the update result
+      }
+    }
+  };
+  try {
+    for (const p of preserveDirs) {
+      const from = path.join(sourceDir, p);
+      if (!fs.existsSync(from)) continue;
+      const to = path.join(tmp, p);
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      fs.renameSync(from, to);
+      moved.push({ from, to });
+    }
+    body();
+    restore(targetDir);
+  } catch (err) {
+    restore(targetDir);
+    throw err;
+  } finally {
+    if (fs.existsSync(tmp)) fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 export class ValidationError extends Error {
@@ -526,19 +596,21 @@ export async function updateAppFromZip(
   const existing = db.getApp(name);
   if (!existing) throw new ValidationError(`App "${name}" not found`);
 
-  // Remove existing files and extract zip
-  const dir = appDir(name);
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.mkdirSync(dir, { recursive: true });
-
-  const zip = new AdmZip(zipPath);
-  zip.extractAllTo(dir, true);
-  fs.rmSync(zipPath, { force: true });
-
   const now = new Date().toISOString();
   const merged = mergeConfig(existing.type, existing.config, appConfig);
   const updates: Parameters<typeof db.updateApp>[1] = { updated_at: now, config: JSON.stringify(merged) };
   if (icon !== undefined) updates.icon = validateIcon(icon);
+
+  // Replace files, keeping configured runtime-data dirs (DBs, uploads) alive.
+  const dir = appDir(name);
+  withPreservedDirs(dir, dir, merged.preserve_dirs ?? [], () => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+
+    const zip = new AdmZip(zipPath);
+    zip.extractAllTo(dir, true);
+    fs.rmSync(zipPath, { force: true });
+  });
 
   // Refresh Caddy route
   const prefix = existing.prefix;
@@ -596,16 +668,22 @@ async function applyMove(
   const newDir = appDir(existing.name, newFolder);
   const running = existing.status !== 'stopped';
 
+  const merged = mergeConfig(existing.type, existing.config);
+
   // docker-compose must be brought down from the old dir before it is moved
   if (existing.type === 'docker-compose' && running) {
     await compose.composeDown(existing.name, oldFolder);
   }
 
   if (files) {
-    writeFiles(existing.name, newFolder, files);
-    if (oldDir !== newDir) {
-      fs.rmSync(oldDir, { recursive: true, force: true });
-    }
+    // Preserve runtime-data dirs while relocating: move aside from the old
+    // dir, write the new files, restore into the new dir.
+    withPreservedDirs(oldDir, newDir, merged.preserve_dirs ?? [], () => {
+      writeFiles(existing.name, newFolder, files);
+      if (oldDir !== newDir) {
+        fs.rmSync(oldDir, { recursive: true, force: true });
+      }
+    });
   } else {
     if (fs.existsSync(newDir) && newDir !== oldDir) {
       throw new ValidationError('Target app directory already exists');
@@ -615,8 +693,6 @@ async function applyMove(
       fs.renameSync(oldDir, newDir);
     }
   }
-
-  const merged = mergeConfig(existing.type, existing.config);
 
   // Routes (stopped apps get routes too — matches historical prefix-update
   // behavior; stopApp removes them again on the next stop)
@@ -688,7 +764,10 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
     await applyMove(existing, newFolder!, newPrefix!, input.files ?? null);
     currentPrefix = newPrefix!;
   } else if (input.files) {
-    writeFiles(name, folderFromPrefix(existing.prefix), input.files);
+    const targetDir = appDir(name, folderFromPrefix(existing.prefix));
+    withPreservedDirs(targetDir, targetDir, merged?.preserve_dirs ?? [], () => {
+      writeFiles(name, folderFromPrefix(existing.prefix), input.files!);
+    });
   }
 
   // Update config if provided — merge with defaults and stored config so partial configs don't lose fields

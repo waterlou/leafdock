@@ -118,6 +118,7 @@ PUT /apps/:name/upload
 Multipart: file=@app.zip, config?='{"config":{"spa":false}}'
 → 200 + updated app object
 ```
+:warning: **Updating files wipes the app directory — state dies with it.** If the app keeps runtime data (SQLite DB, uploads), list those directories in `config.preserve_dirs` on create AND on every update, e.g. `'{"config":{"preserve_dirs":["prisma/data","public/uploads"]}}'`. They are moved aside during the update and restored after. Apps without state need nothing.
 
 ### Create App (JSON — text-only apps)
 ```

@@ -108,6 +108,8 @@ Register a new app. The request includes the app name, type, all source files, a
 
 Only services that need HTTP routing should be listed in `services`. The first service gets the main prefix (`/<name>/`), additional services get sub-prefixes (`/<name>/<serviceName>/`). Internal services (databases, caches) stay on the compose internal network and should be omitted.
 
+**All types accept `preserve_dirs`** (optional, array of relative directory paths): runtime-data directories inside the app directory that survive file replacement — SQLite databases, uploads, etc. Without it, every zip/file update wipes the whole app directory first. Example: `"preserve_dirs": ["prisma/data", "public/uploads"]`. Entries must be relative, non-empty, and free of `..`/`.`/`\`; max 20.
+
 **Response 201:**
 ```json
 {
@@ -196,6 +198,8 @@ Replace an existing app's files by uploading a new zip. Optionally update the co
 |-------|----------|-------------|
 | `file` | yes | `.zip` file containing the updated source files |
 | `config` | no | Optional JSON string with updated configuration. May include `icon` to change the emoji shown next to the app name on the landing page. |
+
+The update replaces the app directory, **except** directories listed in `config.preserve_dirs` (e.g. `"preserve_dirs": ["prisma/data", "public/uploads"]`) — they are moved aside and restored, so databases and uploads survive redeploys.
 
 **Response 200:** Updated app object.
 
