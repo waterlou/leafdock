@@ -132,7 +132,7 @@ Apps can live in subfolders: an app in folder `blog` is served at `http://<nas-h
 
 - **Create in a folder** — add `"folder": "blog"` to the create payload (`""` or omitted = root; mutually exclusive with `prefix`, which sets the full URL instead)
 - **Move** — `POST /api/v1/apps/:name/move` with body `{"folder": "blog"}` (`{"folder": ""}` moves back to root)
-- Folders follow the app-name rules per segment (lowercase letters, digits, hyphens), and cannot shadow or be shadowed by an existing app's URL tree
+- Folders follow per segment: letters (either case), digits, hyphens, starting with a letter — so `Demo`, `Blog`, and `docs` are all valid, and the case you type is the case shown. Folders cannot shadow or be shadowed by an existing app's URL tree
 
 ## App Types
 

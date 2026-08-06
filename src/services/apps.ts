@@ -59,6 +59,11 @@ export interface AppOutput {
 
 const NAME_REGEX = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 
+// Folder segments may use uppercase letters (they are display organization and
+// show verbatim on the landing page); app names stay lowercase because they
+// feed container names, compose project names, and Caddy ids.
+const FOLDER_SEGMENT_REGEX = /^[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)*$/;
+
 function validateName(name: string): void {
   if (!name || !NAME_REGEX.test(name)) {
     throw new ValidationError(
@@ -125,12 +130,12 @@ function folderFromPrefix(prefix: string): string {
 }
 
 // Validate a folder path: drop empty segments (so 'a//b' -> 'a/b'), require every
-// segment to match the app-name charset. '' (or '/', '//') = root. Rejects '..',
-// '.', uppercase, underscores, and anything else outside NAME_REGEX.
+// segment to match the folder charset (letters either case, digits, hyphens).
+// '' (or '/', '//') = root. Rejects '..', '.', underscores, and anything else.
 function validateFolder(folder: string): string {
   const segments = folder.split('/').filter(s => s.length > 0);
   for (const segment of segments) {
-    if (!NAME_REGEX.test(segment)) {
+    if (!FOLDER_SEGMENT_REGEX.test(segment)) {
       throw new ValidationError(`Invalid folder path: ${folder}`);
     }
   }
