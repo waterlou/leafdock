@@ -12,6 +12,12 @@
         reverse_proxy localhost:{$API_PORT:3001}
     }
 
+    # Machine-readable skill pointer for AI agents
+    handle /llms.txt {
+        root * /data/landing
+        file_server
+    }
+
     # Landing page — serve index.html for all unmatched paths
     handle {
         root * /data/landing

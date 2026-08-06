@@ -20,12 +20,23 @@ function ensureLandingPage(): void {
   const indexPath = path.join(landingDir, 'index.html');
   const title = process.env.TITLE || 'Leafdock';
 
+  // Machine-readable pointer for AI agents (llms.txt convention): the usage
+  // skill is the authoritative how-to for the management API.
+  fs.writeFileSync(path.join(landingDir, 'llms.txt'), `# ${title}
+
+Deploy and manage web apps on this server through the REST API (base: /api/v1).
+
+AI agents: read the full usage skill before deploying:
+https://raw.githubusercontent.com/waterlou/leafdock/refs/heads/main/skills/leafdock/SKILL.md
+`, 'utf-8');
+
   fs.writeFileSync(indexPath, `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${title}</title>
+<link rel="alternate" type="text/markdown" title="Leafdock AI skill" href="https://raw.githubusercontent.com/waterlou/leafdock/refs/heads/main/skills/leafdock/SKILL.md">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
   :root { --bg: #0d1117; --fg: #c9d1d9; --card-bg: #161b22; --card-border: #30363d; --link: #58a6ff; --muted: #8b949e; --hover: #1c2128; --tag-bg: #21262d; --green: #3fb950; --yellow: #d29922; --red: #f85149; --select-bg: #21262d; --select-border: #30363d; --err-bg: #21262d; }
@@ -80,6 +91,8 @@ function ensureLandingPage(): void {
   .loading { color: var(--muted); }
   .theme-toggle { margin-top: 24px; background: var(--card-bg); border: 1px solid var(--card-border); color: var(--muted); width: 36px; height: 36px; border-radius: 50%; font-size: 18px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
   .theme-toggle:hover { color: var(--fg); border-color: var(--link); }
+  .skill-link { margin-top: 12px; color: var(--muted); font-size: 11px; text-decoration: none; opacity: 0.6; }
+  .skill-link:hover { opacity: 1; color: var(--link); }
 </style>
 </head>
 <body>
@@ -101,6 +114,7 @@ function ensureLandingPage(): void {
   <div id="app-list" class="loading">Loading apps...</div>
 </div>
 <button class="theme-toggle" id="theme-toggle"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg></button>
+<a class="skill-link" href="https://raw.githubusercontent.com/waterlou/leafdock/refs/heads/main/skills/leafdock/SKILL.md" target="_blank" rel="noreferrer">AI: deployment skill (markdown)</a>
 <script>
 var sunSVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>';
 var moonSVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
