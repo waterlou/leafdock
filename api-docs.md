@@ -36,7 +36,10 @@ Returns a summary list of all registered apps (without file contents).
       "created_at": "2026-05-14T10:00:00Z",
       "updated_at": "2026-05-14T10:00:00Z"
     }
-  ]
+  ],
+  "folder_labels": {
+    "blog": "New Demo Blog"
+  }
 }
 ```
 
@@ -326,6 +329,39 @@ curl -X POST https://nas.ts.net/api/v1/apps/blog-todo/move \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"folder":"blog"}'
+```
+
+---
+
+### Set Folder Display Label
+
+```
+PUT /folders/:path
+```
+
+Set or clear the display label of a folder. The label is metadata only: the URL and the on-disk directory keep using the slug path (e.g. folder `new-demo` → URL `/new-demo/<name>` → disk `<data>/apps/new-demo/<name>`), and the landing page renders the label instead of the slug. Folders exist implicitly via app prefixes; the label persists even if no app currently lives in the folder.
+
+**Request body:**
+```json
+{ "label": "New Demo" }
+```
+
+- `label` — display text shown on the landing page. Trimmed; up to 100 characters; any printable text (spaces, emoji, unicode). `""` (or omitting by sending an empty string) clears the label, falling back to the slug.
+
+**Response 200:**
+```json
+{ "path": "new-demo", "label": "New Demo" }
+```
+
+**Errors:**
+- `400` — Missing path or invalid path (same rules as `folder`: lowercase letters, digits, hyphens), missing/non-string `label`, control characters, or label > 100 chars
+
+**cURL example:**
+```bash
+curl -X PUT https://nas.ts.net/api/v1/folders/new-demo \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"label":"New Demo"}'
 ```
 
 ---

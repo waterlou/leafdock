@@ -5,7 +5,7 @@ description: Deploy and manage web apps on an internal Docker host via REST API.
 
 You have access to **Leafdock** — a Docker-based system that runs on the user's NAS and serves web apps under URL prefixes (e.g., `https://nas.ts.net/my-app`). You can deploy, update, list, and remove apps through its management API.
 
-Apps can live in **subfolders**: an app in folder `blog` is served at `https://nas.ts.net/blog/my-app` and stored on disk at `/data/apps/blog/<name>`. The landing page shows only the current folder's apps and its immediate subfolders — click a folder to drill into it, and use the Back / Root buttons to navigate out (Root appears when more than one level deep). Folders can nest (`blog/tutorials`), and each folder segment is lowercase letters, digits, and hyphens, starting with a letter. Input case is normalized: `Demo` is accepted and stored as `demo`, so the URL, disk layout, and landing page always show the lowercase form.
+Apps can live in **subfolders**: an app in folder `blog` is served at `https://nas.ts.net/blog/my-app` and stored on disk at `/data/apps/blog/<name>`. The landing page shows only the current folder's apps and its immediate subfolders — click a folder to drill into it, and use the Back / Root buttons to navigate out (Root appears when more than one level deep). Folders can nest (`blog/tutorials`), and each folder segment is lowercase letters, digits, and hyphens, starting with a letter. Input case is normalized: `Demo` is accepted and stored as `demo`, so the URL, disk layout, and landing page always show the lowercase form. Each folder can also have a **display label** (e.g. `new-demo` → "New Demo") via `PUT /folders/new-demo` — the landing page shows the label instead of the slug, while the URL and disk path always use the slug.
 
 ## Configuration
 
@@ -158,6 +158,14 @@ curl -X POST $INTRANET_HOST_URL/api/v1/apps/blog-todo/move \
   -H "Content-Type: application/json" \
   -d '{"folder":"blog"}'
 ```
+
+### Set Folder Display Label
+```
+PUT /folders/:path
+Body: { label: "New Demo" }   // "" clears it, falling back to the slug
+→ { path, label }
+```
+Label is metadata only: the URL and disk directory keep the slug (`new-demo`); the landing page renders the label in the folder row. Up to 100 chars, any printable text (it is HTML-escaped on the landing page).
 
 ### Delete App
 ```
@@ -322,6 +330,7 @@ Errors return: `{ error: { code, message } }`
 
 - **After generating code, deploy immediately.** The user wants to see their app live. Don't ask permission — just deploy and give them the URL.
 - **Set an emoji `icon` (e.g. `"🚀"`) on every app.** It renders next to the app name on the landing page, so apps are recognizable at a glance. Any single emoji works (flags, skin tones, family ZWJ sequences); `icon` is optional and defaults to none.
+- **Label folders with human-readable names.** After creating an app in folder `new-demo`, call `PUT /folders/new-demo` with `{"label":"New Demo"}` so the landing page shows the friendly name instead of the slug (URL and disk stay the slug).
 - **If 409 on create, use PUT to update.** The app already exists, just replace it with the new version.
 - **Use SPA mode for React/Vue/Svelte apps.** Set `config.spa: true` so client-side routing works.
 - **Docker apps take longer to start** (image pull + npm install). Tell the user it may take 30-60 seconds.

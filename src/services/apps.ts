@@ -128,7 +128,7 @@ function folderFromPrefix(prefix: string): string {
 // lowercase (so 'Demo' -> 'demo' — the URL, disk layout, and UI all use the
 // normalized form), require every segment to match the app-name charset.
 // '' (or '/', '//') = root. Rejects '..', '.', underscores, and anything else.
-function validateFolder(folder: string): string {
+export function validateFolder(folder: string): string {
   const segments = folder.toLowerCase().split('/').filter(s => s.length > 0);
   for (const segment of segments) {
     if (!NAME_REGEX.test(segment)) {
@@ -319,6 +319,20 @@ export function listApps(): { name: string; type: string; prefix: string; folder
       updated_at: row.updated_at,
     };
   });
+}
+
+// Display labels for folders: slug path -> label. Metadata only; URLs and disk
+// layout always use the slug. Landing page renders these instead of the slug.
+export function listFolderLabels(): Record<string, string> {
+  return db.listFolderLabels();
+}
+
+export function setFolderLabel(folderPath: string, label: string): void {
+  db.setFolderLabel(folderPath, label);
+}
+
+export function clearFolderLabel(folderPath: string): void {
+  db.clearFolderLabel(folderPath);
 }
 
 export function getApp(name: string): AppOutput | null {

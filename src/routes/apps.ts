@@ -12,7 +12,7 @@ function param(req: Request, name: string): string {
 router.get('/', (_req: Request, res: Response) => {
   try {
     const appsList = apps.listApps();
-    res.json({ apps: appsList });
+    res.json({ apps: appsList, folder_labels: apps.listFolderLabels() });
   } catch (err) {
     handleError(res, err);
   }
@@ -226,7 +226,7 @@ router.post('/:name/move', async (req: Request, res: Response) => {
   }
 });
 
-function handleError(res: Response, err: unknown): void {
+export function handleError(res: Response, err: unknown): void {
   if (err instanceof apps.ValidationError) {
     // Check if it's a "not found" or "already exists" style message
     if (err.message.includes('not found')) {

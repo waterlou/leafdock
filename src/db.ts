@@ -27,6 +27,10 @@ export async function initDb(dataDir: string): Promise<void> {
       icon TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS folders (
+      path TEXT PRIMARY KEY,
+      label TEXT NOT NULL
     )
   `);
 
@@ -135,5 +139,31 @@ export function updateApp(name: string, updates: Partial<Pick<AppRow, 'status' |
 
 export function deleteApp(name: string): void {
   db.run('DELETE FROM apps WHERE name = ?', [name]);
+  saveDb();
+}
+
+// Folder display labels: slug path -> human-readable label (e.g. 'new-demo' ->
+// 'New Demo'). Metadata only — disk layout and URLs always use the slug path.
+export function listFolderLabels(): Record<string, string> {
+  const stmt = db.prepare('SELECT path, label FROM folders');
+  const out: Record<string, string> = {};
+  while (stmt.step()) {
+    const row = stmt.getAsObject() as { path: string; label: string };
+    out[row.path] = row.label;
+  }
+  stmt.free();
+  return out;
+}
+
+export function setFolderLabel(folderPath: string, label: string): void {
+  db.run(
+    'INSERT INTO folders (path, label) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET label = excluded.label',
+    [folderPath, label]
+  );
+  saveDb();
+}
+
+export function clearFolderLabel(folderPath: string): void {
+  db.run('DELETE FROM folders WHERE path = ?', [folderPath]);
   saveDb();
 }

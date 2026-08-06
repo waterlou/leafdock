@@ -7,6 +7,7 @@ import { authMiddleware } from './middleware/auth';
 import { syncRoutes } from './services/apps';
 import healthRouter from './routes/health';
 import appsRouter from './routes/apps';
+import foldersRouter from './routes/folders';
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const DATA_DIR = process.env.DATA_DIR || '/data';
@@ -111,6 +112,11 @@ var moonSVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" strok
 var appsData = [];
 var editing = false;
 var currentFolder = '';
+var folderLabels = {};
+
+function escHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 function parentFolder(folder) {
   var i = folder.lastIndexOf('/');
@@ -145,9 +151,10 @@ function appItemHtml(a, depth) {
 }
 
 function folderRowHtml(folder, depth) {
-  var name = folder.split('/').pop();
+  var seg = folder.split('/').pop();
+  var name = folderLabels[folder] || seg;
   var pad = 12 + (depth || 0) * 16;
-  return '<li class="folder-row" data-folder="' + folder + '" style="padding-left:' + pad + 'px">' + name + '</li>';
+  return '<li class="folder-row" data-folder="' + escHtml(folder) + '" style="padding-left:' + pad + 'px">' + escHtml(name) + '</li>';
 }
 
 // Render the current folder level only: apps that live directly in it, plus
@@ -289,6 +296,7 @@ document.getElementById('app-list').addEventListener('click', function(e) {
 fetch('/api/v1/apps', { headers: authHeaders() })
   .then(function(r) { if (r.status === 401) throw new Error('auth'); return r.json(); })
   .then(function(data) {
+    folderLabels = data.folder_labels || {};
     var list = document.getElementById('app-list');
     list.innerHTML = '<div id="app-list-items"></div>';
     var items = document.getElementById('app-list-items');
@@ -322,6 +330,7 @@ async function main() {
 
   // Management API — auth required
   app.use('/api/v1/apps', authMiddleware, appsRouter);
+  app.use('/api/v1/folders', authMiddleware, foldersRouter);
 
   app.listen(PORT, () => {
     console.log(`Management API listening on port ${PORT}`);

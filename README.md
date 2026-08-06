@@ -132,6 +132,7 @@ Apps can live in subfolders: an app in folder `blog` is served at `http://<nas-h
 
 - **Create in a folder** — add `"folder": "blog"` to the create payload (`""` or omitted = root; mutually exclusive with `prefix`, which sets the full URL instead)
 - **Move** — `POST /api/v1/apps/:name/move` with body `{"folder": "blog"}` (`{"folder": ""}` moves back to root)
+- **Display labels** — `PUT /api/v1/folders/:path` with `{"label":"New Demo"}` sets a human-readable folder name for the landing page; the URL and on-disk directory keep the slug (`new-demo`). `{"label":""}` clears it.
 - Folders follow per segment: lowercase letters, digits, hyphens, starting with a letter. Input case is normalized — `Demo` is accepted but stored and shown as `demo`, matching the URL. Folders cannot shadow or be shadowed by an existing app's URL tree
 
 ## App Types
@@ -188,6 +189,7 @@ The uploaded files (compose file, Dockerfiles, source) are placed in `/data/apps
 | `POST` | `/api/v1/apps/:name/stop` | Stop app |
 | `POST` | `/api/v1/apps/:name/start` | Start app |
 | `POST` | `/api/v1/apps/:name/move` | Move app into/out of a subfolder |
+| `PUT` | `/api/v1/folders/:path` | Set/clear a folder display label |
 | `GET` | `/api/v1/health` | Health check |
 
 All `/apps` endpoints require `Authorization: Bearer <MANAGEMENT_API_KEY>`.
