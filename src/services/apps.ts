@@ -726,7 +726,49 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
 
   db.updateApp(name, updates);
 
+  // Moving the last app out of a folder leaves it empty: clean up its label
+  // and directory (after the DB update so the app itself doesn't count).
+  if (moved) cleanupFolder(folderFromPrefix(existing.prefix));
+
   return rowToOutput(db.getApp(name)!);
+}
+
+// Folders are implicit — they exist only via app prefixes. When an app leaves
+// a folder (delete or move), drop the folder's display label and on-disk
+// directory if nothing else uses them, walking up the chain for ancestors.
+function cleanupFolder(folderPath: string): void {
+  if (!folderPath) return;
+
+  // Label paths affected: ancestors of folderPath, folderPath itself, and
+  // everything nested under it.
+  const relevant = new Set<string>();
+  let f = folderPath;
+  while (f) {
+    relevant.add(f);
+    const i = f.lastIndexOf('/');
+    f = i === -1 ? '' : f.slice(0, i);
+  }
+  for (const p of Object.keys(db.listFolderLabels())) {
+    if (p.startsWith(folderPath + '/')) relevant.add(p);
+  }
+
+  for (const p of relevant) {
+    const alive = db.listApps().some(a => {
+      const af = folderFromPrefix(a.prefix);
+      return af === p || af.startsWith(p + '/');
+    });
+    if (!alive) db.clearFolderLabel(p);
+  }
+
+  // Remove empty directories up the chain (rmdir fails on non-empty or missing
+  // dirs, which is exactly the stop condition). Never touches the apps root.
+  let dirPath = folderPath;
+  while (dirPath) {
+    const dir = path.join(getDataDir(), 'apps', ...dirPath.split('/'));
+    try { fs.rmdirSync(dir); } catch { break; }
+    const i = dirPath.lastIndexOf('/');
+    dirPath = i === -1 ? '' : dirPath.slice(0, i);
+  }
 }
 
 export async function deleteApp(name: string): Promise<void> {
@@ -767,8 +809,11 @@ export async function deleteApp(name: string): Promise<void> {
   // Remove files
   fs.rmSync(appDir(name), { recursive: true, force: true });
 
-  // Remove from database
+  // Remove from database, then clean up the folder (labels + empty dirs) if
+  // this was the last app in it.
+  const folderPath = folderFromPrefix(existing.prefix);
   db.deleteApp(name);
+  cleanupFolder(folderPath);
 }
 
 export async function getLogs(name: string, tail: number): Promise<string> {

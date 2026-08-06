@@ -374,6 +374,8 @@ DELETE /apps/:name
 
 Removes the app entirely: deletes all files, stops the container (if docker or docker-compose type), and removes the Caddy route. This is irreversible.
 
+If the app was the last one in its folder, the folder's on-disk directory and display label are removed as well (folders are implicit — they exist only while apps live in them).
+
 **Response 204:** No content.
 
 **Errors:**

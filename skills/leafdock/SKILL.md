@@ -172,7 +172,7 @@ Label is metadata only: the URL and disk directory keep the slug (`new-demo`); t
 DELETE /apps/:name
 → 204
 ```
-Irreversible — removes files, stops container (if docker), deletes route.
+Irreversible — removes files, stops container (if docker), deletes route. Deleting the last app in a folder also removes the folder's directory and display label.
 
 ### Get Logs
 ```
