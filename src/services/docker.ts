@@ -47,11 +47,7 @@ export async function createContainer(
       [`${config.port}/tcp`]: {},
     },
     HostConfig: {
-      Mounts: [{
-        Type: 'volume',
-        Source: process.env.APP_VOLUME || 'leafdock_app_data',
-        Target: '/app',
-      }],
+      Mounts: [appVolumeMount()],
       CpuShares: parseCpuLimit(config.cpu_limit),
       Memory: parseMemLimit(config.mem_limit),
       NetworkMode: 'leafdock_default', // shared Docker network
@@ -63,6 +59,19 @@ export async function createContainer(
 
   await container.start();
   return containerName;
+}
+
+// The shared storage between leafdock and app containers. Defaults to a named
+// volume (leafdock_app_data); if APP_VOLUME is an absolute host path (NAS
+// setups often bind-mount a host dir to /data, e.g. /volume1/docker/leafdock),
+// mount it as a bind instead — otherwise app containers would see a different,
+// empty store and lose their uploaded files.
+function appVolumeMount(): { Type: 'volume' | 'bind'; Source: string; Target: '/app' } {
+  const src = process.env.APP_VOLUME || 'leafdock_app_data';
+  if (src.startsWith('/') || /^[A-Za-z]:[\\/]/.test(src)) {
+    return { Type: 'bind', Source: src, Target: '/app' };
+  }
+  return { Type: 'volume', Source: src, Target: '/app' };
 }
 
 // Run config.build_command to completion in a throwaway container. Failures
@@ -82,11 +91,7 @@ async function runBuildContainer(appName: string, workDir: string, config: Docke
     Cmd: ['sh', '-c', buildCmd],
     WorkingDir: workDir,
     HostConfig: {
-      Mounts: [{
-        Type: 'volume',
-        Source: process.env.APP_VOLUME || 'leafdock_app_data',
-        Target: '/app',
-      }],
+      Mounts: [appVolumeMount()],
       CpuShares: parseCpuLimit(config.cpu_limit),
       Memory: parseMemLimit(config.mem_limit),
       NetworkMode: 'leafdock_default',
