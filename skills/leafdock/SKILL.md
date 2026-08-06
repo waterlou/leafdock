@@ -5,7 +5,7 @@ description: Deploy and manage web apps on an internal Docker host via REST API.
 
 You have access to **Leafdock** — a Docker-based system that runs on the user's NAS and serves web apps under URL prefixes (e.g., `https://nas.ts.net/my-app`). You can deploy, update, list, and remove apps through its management API.
 
-Apps can live in **subfolders**: an app in folder `blog` is served at `https://nas.ts.net/blog/my-app` and stored on disk at `/data/apps/blog/<name>`. The landing page shows only the current folder's apps and its immediate subfolders — click a folder to drill into it, and use the Back / Root buttons to navigate out (Root appears when more than one level deep). Folders can nest (`blog/tutorials`), and each folder segment is letters (either case — `Demo` and `blog` both work), digits, and hyphens, starting with a letter.
+Apps can live in **subfolders**: an app in folder `blog` is served at `https://nas.ts.net/blog/my-app` and stored on disk at `/data/apps/blog/<name>`. The landing page shows only the current folder's apps and its immediate subfolders — click a folder to drill into it, and use the Back / Root buttons to navigate out (Root appears when more than one level deep). Folders can nest (`blog/tutorials`), and each folder segment is lowercase letters, digits, and hyphens, starting with a letter. Input case is normalized: `Demo` is accepted and stored as `demo`, so the URL, disk layout, and landing page always show the lowercase form.
 
 ## Configuration
 

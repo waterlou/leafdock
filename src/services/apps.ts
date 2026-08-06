@@ -59,11 +59,6 @@ export interface AppOutput {
 
 const NAME_REGEX = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 
-// Folder segments may use uppercase letters (they are display organization and
-// show verbatim on the landing page); app names stay lowercase because they
-// feed container names, compose project names, and Caddy ids.
-const FOLDER_SEGMENT_REGEX = /^[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)*$/;
-
 function validateName(name: string): void {
   if (!name || !NAME_REGEX.test(name)) {
     throw new ValidationError(
@@ -129,13 +124,14 @@ function folderFromPrefix(prefix: string): string {
   return prefix.split('/').slice(1, -1).join('/');
 }
 
-// Validate a folder path: drop empty segments (so 'a//b' -> 'a/b'), require every
-// segment to match the folder charset (letters either case, digits, hyphens).
+// Validate a folder path: drop empty segments (so 'a//b' -> 'a/b'), normalize to
+// lowercase (so 'Demo' -> 'demo' — the URL, disk layout, and UI all use the
+// normalized form), require every segment to match the app-name charset.
 // '' (or '/', '//') = root. Rejects '..', '.', underscores, and anything else.
 function validateFolder(folder: string): string {
-  const segments = folder.split('/').filter(s => s.length > 0);
+  const segments = folder.toLowerCase().split('/').filter(s => s.length > 0);
   for (const segment of segments) {
-    if (!FOLDER_SEGMENT_REGEX.test(segment)) {
+    if (!NAME_REGEX.test(segment)) {
       throw new ValidationError(`Invalid folder path: ${folder}`);
     }
   }
@@ -355,7 +351,7 @@ export async function createApp(input: AppInput): Promise<AppOutput> {
   let folder = input.folder !== undefined ? validateFolder(input.folder) : '';
   const prefix = input.folder !== undefined
     ? (folder ? `/${folder}/${input.name}` : `/${input.name}`)
-    : normalizePrefix(input.prefix || prefixFromName(input.name));
+    : '/' + validateFolder(normalizePrefix((input.prefix || prefixFromName(input.name)).toLowerCase()).slice(1));
   folder = folderFromPrefix(prefix);
 
   const icon = input.icon !== undefined ? validateIcon(input.icon) : '';
@@ -641,7 +637,7 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
   let newPrefix: string | null = null;
   let newFolder: string | null = null;
   if (input.prefix) {
-    newPrefix = normalizePrefix(input.prefix);
+    newPrefix = '/' + validateFolder(normalizePrefix(input.prefix.toLowerCase()).slice(1));
     newFolder = folderFromPrefix(newPrefix);
   } else if (input.folder !== undefined) {
     newFolder = validateFolder(input.folder);

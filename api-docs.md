@@ -72,8 +72,8 @@ Register a new app. The request includes the app name, type, all source files, a
 |-------|----------|-------------|
 | `name` | yes | URL-safe slug. Must match `^[a-z0-9]+(-[a-z0-9]+)*$` |
 | `type` | yes | `"static"`, `"docker"`, or `"docker-compose"` |
-| `prefix` | no | URL prefix. Defaults to `/<name>` |
-| `folder` | no | Optional subfolder (e.g. `"blog"` or `"blog/tutorials"`). Mutually exclusive with `prefix`. `""` (or omitted) = root. The disk layout mirrors it: an app in folder `blog` lives at `<data>/apps/blog/<name>` and is served at `/blog/<name>/`. |
+| `prefix` | no | URL prefix. Defaults to `/<name>`. Normalized to lowercase. |
+| `folder` | no | Optional subfolder (e.g. `"blog"` or `"blog/tutorials"`). Mutually exclusive with `prefix`. `""` (or omitted) = root. The disk layout mirrors it: an app in folder `blog` lives at `<data>/apps/blog/<name>` and is served at `/blog/<name>/`. Case is normalized to lowercase (`"Demo"` → `demo`). |
 | `files` | yes | Array of `{path, content, encoding?}` objects. For binary files (images, video), set `encoding: "base64"` and base64-encode the content. |
 | `config` | no | Type-specific config (see below) |
 | `icon` | no | Optional emoji shown next to the app name on the landing page (e.g. `"🚀"`). Single emoji including flags, skin tones, and ZWJ families; `""` (or omitted) = none. |
