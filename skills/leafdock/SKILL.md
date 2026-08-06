@@ -277,6 +277,39 @@ curl -X PUT $INTRANET_HOST_URL/api/v1/apps/my-app/upload \
 > await fetch(`${API}/apps`, { method: "POST", headers: {...HEADERS, "Content-Type": "application/json"}, body });
 > ```
 
+## Workflow: Deploy a Next.js App
+
+Next.js apps need three things when served behind a prefix-stripping proxy — set them all at deploy time:
+
+1. **`strip_prefix: false`** in the config — the prefix passes through to the container untouched, so Next's native `BASE_PATH` works exactly like a direct hosting setup (e.g. `app.example.com/my-app`).
+2. **`BASE_PATH=/<app-name>`** in `env` — Next serves itself under `/travel-expense` (assets, API routes, redirects all consistent). Set `NEXTAUTH_URL` to the full external URL including the base path (e.g. `http://host:port/travel-expense/api/auth` if the app's docs require it).
+3. **`build_command` + `run_command`** — build once, start fast:
+   ```json
+   "build_command": "npm ci && npx prisma migrate deploy && npm run build",
+   "run_command": "npx next start"
+   ```
+   The build runs in a one-shot container on create/update; restarts and env changes skip it (seconds, not minutes). If the app keeps state, also set `preserve_dirs` (see above).
+
+Example config for `travel-expense`-style apps:
+
+```json
+{
+  "name": "my-app",
+  "type": "docker",
+  "config": {
+    "image": "node:20-alpine",
+    "port": 3000,
+    "strip_prefix": false,
+    "mem_limit": "2g",
+    "build_command": "npm ci && npm run build",
+    "run_command": "npm start",
+    "env": { "BASE_PATH": "/my-app", "NEXTAUTH_URL": "http://host:port/my-app" }
+  }
+}
+```
+
+`env` merges over the stored env on updates — partial env patches no longer drop other variables.
+
 ## Workflow: Deploy a Docker App
 
 ```javascript

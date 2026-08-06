@@ -24,6 +24,11 @@ export interface DockerAppConfig {
   command?: string;
   cpu_limit: string;
   mem_limit: string;
+  // P2: build once (create/update) in a one-shot build container, then run
+  // `run_command` (or `command`) in the app container. Config/env-only changes
+  // then restart the app container without rebuilding — seconds, not minutes.
+  build_command?: string;
+  run_command?: string;
 }
 
 export interface DockerComposeAppConfig {
@@ -120,9 +125,30 @@ function mergeConfig(
       throw new ValidationError('"strip_prefix": false only applies to docker and docker-compose apps.');
     }
   }
-  const merged = { ...getDefaultConfig(type), ...(stored ? JSON.parse(stored) : {}), ...patch };
-  validateStaticConfig(merged, type);
-  return merged;
+  for (const key of ['build_command', 'run_command'] as const) {
+    // Config arrives as the AppConfig union; build_command/run_command are
+    // docker-only, so narrow through Partial<DockerAppConfig>.
+    const cmd = (patch as Partial<DockerAppConfig> | undefined)?.[key];
+    if (cmd !== undefined && typeof cmd !== 'string') {
+      throw new ValidationError(`"${key}" must be a string.`);
+    }
+  }
+  const base = { ...getDefaultConfig(type), ...(stored ? JSON.parse(stored) : {}), ...patch } as Partial<DockerAppConfig> & AppConfig;
+  // P3: env is a map — merge over the stored env so partial updates never
+  // clobber other variables (e.g. re-sending one var dropping NEXTAUTH_SECRET).
+  const patchEnv = (patch as Partial<DockerAppConfig> | undefined)?.env;
+  if (patchEnv && typeof patchEnv === 'object' && stored) {
+    const storedConfig = JSON.parse(stored) as Partial<DockerAppConfig>;
+    if (storedConfig.env && typeof storedConfig.env === 'object') {
+      base.env = { ...storedConfig.env, ...patchEnv };
+    }
+  }
+  // P4: build-in-container apps need headroom; the 128m default OOMs builds.
+  if (base.build_command && base.mem_limit === '128m') {
+    base.mem_limit = '2g';
+  }
+  validateStaticConfig(base, type);
+  return base;
 }
 
 // Default routing mode is prefix-stripping; pass-through only when the app
@@ -997,8 +1023,15 @@ export async function stopApp(name: string): Promise<AppOutput> {
 
   // Stop containers if applicable
   if (existing.type === 'docker') {
+    const dockerConfig = JSON.parse(existing.config) as DockerAppConfig;
     try {
-      await docker.stopContainer(name);
+      // Build-split apps keep the container (with its build outputs) so the
+      // next start is a plain container start, not a rebuild.
+      if (dockerConfig.build_command) {
+        await docker.stopContainerKeep(name);
+      } else {
+        await docker.stopContainer(name);
+      }
     } catch {
       // Container might already be gone
     }
@@ -1026,10 +1059,23 @@ export async function startApp(name: string): Promise<AppOutput> {
 
   if (existing.type === 'docker') {
     const dockerConfig = config as DockerAppConfig;
-    await docker.pullImage(dockerConfig.image);
-    const containerId = await docker.createContainer(name, appDir(name), dockerConfig);
-    await caddy.addDockerRoute(existing.prefix, containerId, dockerConfig.port, stripPrefix(config));
-    updates.container_id = containerId;
+    if (dockerConfig.build_command) {
+      // Container is kept across stop/start — start it in place when it still
+      // exists, so no rebuild happens on a simple start.
+      if (await docker.startContainer(name)) {
+        await caddy.addDockerRoute(existing.prefix, docker.containerNameForApp(name), dockerConfig.port, stripPrefix(config));
+      } else {
+        await docker.pullImage(dockerConfig.image);
+        const containerId = await docker.createContainer(name, appDir(name), dockerConfig);
+        await caddy.addDockerRoute(existing.prefix, containerId, dockerConfig.port, stripPrefix(config));
+        updates.container_id = containerId;
+      }
+    } else {
+      await docker.pullImage(dockerConfig.image);
+      const containerId = await docker.createContainer(name, appDir(name), dockerConfig);
+      await caddy.addDockerRoute(existing.prefix, containerId, dockerConfig.port, stripPrefix(config));
+      updates.container_id = containerId;
+    }
   } else if (existing.type === 'docker-compose') {
     const composeConfig = config as DockerComposeAppConfig;
     await compose.composeUp(name, folderFromPrefix(existing.prefix), composeConfig.services);

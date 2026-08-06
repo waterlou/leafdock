@@ -95,7 +95,9 @@ Register a new app. The request includes the app name, type, all source files, a
 | `image` | string | `"node:20-alpine"` | Docker image |
 | `port` | number | `3000` | Container port to proxy to |
 | `env` | object | `{}` | Environment variables passed to container |
-| `command` | string | — | Override container command |
+| `command` | string | — | Override container command. Without `build_command` this runs at every container start (build + run together). |
+| `build_command` | string | — | Run once per create/update in a one-shot build container (shares the app volume, so outputs persist). Use with `run_command` so restarts and env-only changes skip the build. Presence auto-raises the default `mem_limit` from `128m` to `2g`. |
+| `run_command` | string | — | What the app container runs (falls back to `command`). |
 | `cpu_limit` | string | `"0.5"` | CPU shares |
 | `mem_limit` | string | `"128m"` | Memory limit |
 | `strip_prefix` | boolean | `true` | `false` = pass the URL prefix through to the container untouched. For apps with a native base path (e.g. Next.js built with `BASE_PATH=/my-app`): the app receives `/my-app/...` requests intact and serves them itself, exactly like a direct deployment. Default `true` strips the prefix and serves the app at its root. Static apps always strip. |

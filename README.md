@@ -108,6 +108,8 @@ npm run start:local
 
 It prints the API and landing-page URLs, runs Caddy and the management API together, and stops Caddy when you Ctrl-C. `DATA_DIR` defaults to `./data`.
 
+On the NAS (compose install): `./scripts/start-nas.sh` builds and starts the stack on a port that is actually free (overriding an occupied `HTTP_PORT` in `.env`), waits for the health check, and prints the URL.
+
 For development with auto-reload:
 ```bash
 npm run dev

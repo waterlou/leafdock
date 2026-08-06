@@ -9,6 +9,8 @@ interface DockerAppConfig {
   command?: string;
   cpu_limit: string;
   mem_limit: string;
+  build_command?: string;
+  run_command?: string;
 }
 
 export function containerNameForApp(name: string): string {
@@ -25,13 +27,21 @@ export async function createContainer(
   // Remove existing container with same name if any
   await removeContainerIfExists(containerName);
 
+  // P2: build once in a one-shot container before the app container starts.
+  // Builds share the app volume, so outputs (node_modules/.next) persist and
+  // the app container's command is just the run command — restarts stay fast.
+  if (config.build_command) {
+    await runBuildContainer(appName, config);
+  }
+
   const envVars = Object.entries(config.env).map(([k, v]) => `${k}=${v}`);
+  const runCmd = config.run_command || config.command;
 
   const container = await docker.createContainer({
     name: containerName,
     Image: config.image,
     Env: envVars,
-    Cmd: config.command ? ['sh', '-c', config.command] : undefined,
+    Cmd: runCmd ? ['sh', '-c', runCmd] : undefined,
     WorkingDir: `/app/apps/${appName}`,
     ExposedPorts: {
       [`${config.port}/tcp`]: {},
@@ -53,6 +63,66 @@ export async function createContainer(
 
   await container.start();
   return containerName;
+}
+
+// Run config.build_command to completion in a throwaway container. Failures
+// surface the container's log tail in the error so the API reports them.
+async function runBuildContainer(appName: string, config: DockerAppConfig): Promise<void> {
+  const buildCmd = config.build_command;
+  if (!buildCmd) return;
+  const buildName = `ld-build-${appName}`;
+  await removeContainerIfExists(buildName);
+
+  const envVars = Object.entries(config.env).map(([k, v]) => `${k}=${v}`);
+
+  const container = await docker.createContainer({
+    name: buildName,
+    Image: config.image,
+    Env: envVars,
+    Cmd: ['sh', '-c', buildCmd],
+    WorkingDir: `/app/apps/${appName}`,
+    HostConfig: {
+      Mounts: [{
+        Type: 'volume',
+        Source: process.env.APP_VOLUME || 'leafdock_app_data',
+        Target: '/app',
+      }],
+      CpuShares: parseCpuLimit(config.cpu_limit),
+      Memory: parseMemLimit(config.mem_limit),
+      NetworkMode: 'leafdock_default',
+    },
+  });
+
+  await container.start();
+  const status = await container.wait();
+  if (status.StatusCode !== 0) {
+    const logs = await container.logs({ stdout: true, stderr: true }).catch(() => Buffer.from(''));
+    await container.remove({ force: true }).catch(() => {});
+    const tail = logs.toString('utf-8').split('\n').slice(-40).join('\n');
+    throw new Error(
+      `Build failed (exit code ${status.StatusCode}) — last log lines:\n${tail}`
+    );
+  }
+  await container.remove({ force: true });
+}
+
+// Build-split apps keep their container across stop/start so a start does not
+// re-trigger the build. Plain stop/start of the existing container.
+export async function stopContainerKeep(appName: string): Promise<void> {
+  try {
+    await docker.getContainer(containerNameForApp(appName)).stop();
+  } catch {
+    // not running or missing
+  }
+}
+
+export async function startContainer(appName: string): Promise<boolean> {
+  try {
+    await docker.getContainer(containerNameForApp(appName)).start();
+    return true;
+  } catch {
+    return false; // missing — caller must create it
+  }
 }
 
 async function removeContainerIfExists(containerName: string): Promise<void> {
