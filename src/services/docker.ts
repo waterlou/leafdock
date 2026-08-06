@@ -1,4 +1,5 @@
 import Docker from 'dockerode';
+import * as os from 'os';
 
 const docker = new Docker({ socketPath: process.env.DOCKER_SOCKET || '/var/run/docker.sock' });
 
@@ -47,7 +48,7 @@ export async function createContainer(
       [`${config.port}/tcp`]: {},
     },
     HostConfig: {
-      Mounts: [appVolumeMount()],
+      Mounts: [await appVolumeMount()],
       CpuShares: parseCpuLimit(config.cpu_limit),
       Memory: parseMemLimit(config.mem_limit),
       NetworkMode: 'leafdock_default', // shared Docker network
@@ -61,17 +62,41 @@ export async function createContainer(
   return containerName;
 }
 
-// The shared storage between leafdock and app containers. Defaults to a named
-// volume (leafdock_app_data); if APP_VOLUME is an absolute host path (NAS
-// setups often bind-mount a host dir to /data, e.g. /volume1/docker/leafdock),
-// mount it as a bind instead — otherwise app containers would see a different,
-// empty store and lose their uploaded files.
-function appVolumeMount(): { Type: 'volume' | 'bind'; Source: string; Target: '/app' } {
-  const src = process.env.APP_VOLUME || 'leafdock_app_data';
-  if (src.startsWith('/') || /^[A-Za-z]:[\\/]/.test(src)) {
-    return { Type: 'bind', Source: src, Target: '/app' };
+// The shared storage between leafdock and app containers. Explicit APP_VOLUME
+// wins (host path → bind, name → volume); otherwise ask the Docker daemon what
+// THIS container mounts at DATA_DIR and mount the same store into app
+// containers — named volume and NAS bind-mount layouts both work with zero
+// configuration. Resolved once and cached.
+let storageCache: Promise<{ Type: 'volume' | 'bind'; Source: string }> | null = null;
+
+function appStorage(): Promise<{ Type: 'volume' | 'bind'; Source: string }> {
+  const explicit = process.env.APP_VOLUME;
+  if (explicit) {
+    return Promise.resolve(
+      explicit.startsWith('/') || /^[A-Za-z]:[\\/]/.test(explicit)
+        ? { Type: 'bind', Source: explicit }
+        : { Type: 'volume', Source: explicit }
+    );
   }
-  return { Type: 'volume', Source: src, Target: '/app' };
+  if (!storageCache) {
+    storageCache = (async () => {
+      try {
+        // Inside a container the hostname is the container id.
+        const info = await docker.getContainer(os.hostname()).inspect();
+        const mount = (info.Mounts || []).find(m => m.Destination === (process.env.DATA_DIR || '/data'));
+        if (mount?.Type === 'bind' && mount.Source) return { Type: 'bind', Source: mount.Source };
+        if (mount?.Type === 'volume' && mount.Name) return { Type: 'volume', Source: mount.Name };
+      } catch {
+        // Not running inside docker (macOS dev) — fall through.
+      }
+      return { Type: 'volume', Source: 'leafdock_app_data' };
+    })();
+  }
+  return storageCache;
+}
+
+async function appVolumeMount(): Promise<{ Type: 'volume' | 'bind'; Source: string; Target: '/app' }> {
+  return { ...(await appStorage()), Target: '/app' };
 }
 
 // Run config.build_command to completion in a throwaway container. Failures
@@ -91,7 +116,7 @@ async function runBuildContainer(appName: string, workDir: string, config: Docke
     Cmd: ['sh', '-c', buildCmd],
     WorkingDir: workDir,
     HostConfig: {
-      Mounts: [appVolumeMount()],
+      Mounts: [await appVolumeMount()],
       CpuShares: parseCpuLimit(config.cpu_limit),
       Memory: parseMemLimit(config.mem_limit),
       NetworkMode: 'leafdock_default',
