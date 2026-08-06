@@ -318,6 +318,8 @@ Errors return: `{ error: { code, message } }`
 
 Send valid JSON (double quotes, quoted keys). The API tolerates common mistakes — single-quoted strings, unquoted keys, trailing commas — and repairs them, but rely on strict JSON for predictable results. `{"name":"my-app","type":"static"}` is the canonical form.
 
+**API unreachable?** Confirm with `GET /health` (no auth). Startup failures (e.g. "Port ... is already in use by PID ...") are printed to the container's stdout/stderr before the API can serve anything — read the deployment logs: `docker compose logs leafdock --tail 50` (or `docker logs leafdock`). Do not retry blindly: check the logs first, fix the cause, then retry.
+
 | Code | Meaning |
 |------|---------|
 | `app_not_found` | No app with that name |
