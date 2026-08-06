@@ -386,9 +386,36 @@ async function main() {
   app.use('/api/v1/apps', authMiddleware, appsRouter);
   app.use('/api/v1/folders', authMiddleware, foldersRouter);
 
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`Management API listening on port ${PORT}`);
   });
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      failPortInUse(PORT);
+      return;
+    }
+    throw err;
+  });
+}
+
+// A busy PORT is an ops problem, not a code one: print who owns the port and
+// how to move leafdock, instead of a raw stack trace.
+function failPortInUse(port: number): void {
+  try {
+    const execSync = require('child_process').execSync as (cmd: string) => Buffer;
+    const pids = execSync(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null | head -1`).toString().trim();
+    if (pids) {
+      const cmd = execSync(`ps -p ${pids} -o command=`).toString().trim();
+      console.error(`Port ${port} is already in use by PID ${pids} (${cmd}).`);
+    } else {
+      console.error(`Port ${port} is already in use.`);
+    }
+  } catch {
+    console.error(`Port ${port} is already in use.`);
+  }
+  console.error(`Pick a free port and point Caddy's /api reverse_proxy at it, e.g.:`);
+  console.error(`  PORT=3100 npx tsx src/index.ts`);
+  process.exit(1);
 }
 
 main().catch((err) => {
