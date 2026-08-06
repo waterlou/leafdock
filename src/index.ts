@@ -181,6 +181,20 @@ function renderApps(container, apps, sortBy) {
   container.innerHTML = html;
 }
 
+// Breadcrumb for the current folder: each segment shows the label of its
+// path-so-far when one exists, else the slug segment (e.g. 'New Demo / Guides'
+// for path 'new-demo/guides' when both are labeled).
+function folderPathLabel(folder) {
+  var parts = folder.split('/');
+  var out = [];
+  var acc = '';
+  parts.forEach(function(seg) {
+    acc = acc === '' ? seg : acc + '/' + seg;
+    out.push(folderLabels[acc] || seg);
+  });
+  return out.join(' / ');
+}
+
 function updateNav() {
   var nav = document.getElementById('nav-row');
   if (!nav) return;
@@ -190,7 +204,7 @@ function updateNav() {
   }
   nav.style.display = 'flex';
   document.getElementById('root-btn').style.display = currentFolder.indexOf('/') !== -1 ? 'inline-block' : 'none';
-  document.getElementById('nav-path').textContent = currentFolder;
+  document.getElementById('nav-path').textContent = folderPathLabel(currentFolder);
 }
 
 function getKey() { return localStorage.getItem('apiKey') || ''; }
