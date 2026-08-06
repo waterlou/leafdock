@@ -163,7 +163,7 @@ The config JSON supports the same fields as the JSON Create App endpoint, except
 
 **Errors:**
 - `409` — App name already exists
-- `400` — Missing name/type in config, invalid name, or no zip file
+- `400` — Missing name/type in config, invalid name or folder, or no zip file
 
 **cURL example:**
 ```bash
@@ -299,7 +299,7 @@ Partial update. Only include the fields you want to change. When `files` is prov
 POST /apps/:name/move
 ```
 
-Move an app into or out of a subfolder. Files on disk are relocated (`<data>/apps/blog/<name>` ↔ `<data>/apps/<name>`), the Caddy route is swapped, and docker / docker-compose containers are recreated for running apps. Stopped apps are moved on disk and their routes; containers are rebuilt on the next start.
+Move an app into or out of a subfolder. Files on disk are relocated (`<data>/apps/blog/<name>` ↔ `<data>/apps/<name>`), the Caddy route is swapped, and docker / docker-compose containers are recreated for running apps. Stopped apps have their files and routes moved; containers are rebuilt on the next start.
 
 **Request body:**
 ```json
