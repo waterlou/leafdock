@@ -51,7 +51,7 @@ function ensureLandingPage(): void {
   .nav-btn { background: var(--select-bg); border: 1px solid var(--select-border); color: var(--fg); padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
   .nav-btn:hover { border-color: var(--link); }
   .nav-path { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .folder-row { color: var(--muted); font-weight: 600; font-size: 13px; cursor: pointer; }
+  .folder-row { color: var(--muted); font-weight: 600; font-size: 16px; cursor: pointer; }
   .folder-row::before { content: '▸'; color: var(--muted); font-size: 11px; }
   .folder-row:hover { color: var(--link); }
   .folder-row:hover::before { color: var(--link); }
