@@ -214,6 +214,10 @@ function readFiles(name: string, folder: string): AppFile[] {
   const walk = (currentDir: string) => {
     const entries = fs.readdirSync(currentDir, { withFileTypes: true });
     for (const entry of entries) {
+      // Build artifacts (docker apps install node_modules / build .next into
+      // the app dir): walking them makes every file-bearing response enormous
+      // and slow, and can blow the JSON string limit entirely.
+      if (entry.isDirectory() && (entry.name === 'node_modules' || entry.name === '.next')) continue;
       const fullPath = path.join(currentDir, entry.name);
       if (entry.isDirectory()) {
         walk(fullPath);
@@ -348,7 +352,19 @@ export function downloadAppZip(name: string): Buffer {
   const dir = appDir(name);
   if (!fs.existsSync(dir)) throw new ValidationError(`App "${name}" not found`);
   const zip = new AdmZip();
-  zip.addLocalFolder(dir);
+  const walk = (currentDir: string, prefix: string) => {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      if (entry.isDirectory() && (entry.name === 'node_modules' || entry.name === '.next')) continue;
+      const fullPath = path.join(currentDir, entry.name);
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        walk(fullPath, rel);
+      } else {
+        zip.addFile(rel, fs.readFileSync(fullPath));
+      }
+    }
+  };
+  walk(dir, '');
   return zip.toBuffer();
 }
 
