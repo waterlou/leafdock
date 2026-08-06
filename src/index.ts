@@ -78,6 +78,12 @@ https://raw.githubusercontent.com/waterlou/leafdock/refs/heads/main/skills/leafd
   .status.running { color: var(--green); }
   .status.stopped { color: var(--yellow); }
   .status.error { color: var(--red); }
+  /* Mobile: drop the type tag, collapse status text into a colored dot */
+  @media (max-width: 600px) {
+    .app-type { display: none; }
+    .status { font-size: 0; }
+    .status::before { content: '●'; font-size: 14px; }
+  }
   .app-actions { display: flex; gap: 4px; flex-shrink: 0; overflow: hidden; max-width: 0; opacity: 0; visibility: hidden; transition: opacity 0.2s, visibility 0.2s, max-width 0.2s; }
   .editing .app-actions { max-width: 200px; opacity: 1; visibility: visible; }
   .app-actions button { border: none; border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
