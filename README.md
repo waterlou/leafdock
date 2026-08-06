@@ -46,7 +46,7 @@ echo "TITLE=My Intranet" >> .env
 docker compose up -d
 ```
 
-The management API is available at `http://<nas-hostname>/api/v1`. Apps are served at `http://<nas-hostname>/<app-name>`.
+The management API is available at `http://<nas-hostname>/api/v1`. Apps are served at `http://<nas-hostname>/<app-name>` (or `/<folder>/<app-name>` inside a subfolder).
 
 ---
 
@@ -125,6 +125,14 @@ curl -X POST http://localhost/api/v1/apps \
 
 Then visit `http://<nas-hostname>/hello`.
 
+## Subfolders
+
+Apps can live in subfolders: an app in folder `blog` is served at `http://<nas-hostname>/blog/my-app` and stored on disk at `/data/apps/blog/my-app/`. Folders can nest (`blog/tutorials`), and the landing page groups apps under folder headers.
+
+- **Create in a folder** — add `"folder": "blog"` to the create payload (`""` or omitted = root; mutually exclusive with `prefix`, which sets the full URL instead)
+- **Move** — `POST /api/v1/apps/:name/move` with body `{"folder": "blog"}` (`{"folder": ""}` moves back to root)
+- Folders follow the app-name rules per segment (lowercase letters, digits, hyphens), and cannot shadow or be shadowed by an existing app's URL tree
+
 ## App Types
 
 ### Static
@@ -158,7 +166,7 @@ Multiple containers defined in a `docker-compose.yml`. Caddy routes to individua
 | `compose_file` | `docker-compose.yml` | Compose file name to use |
 | `services` | `{}` | Map of service name to `{ port }` for Caddy routing |
 
-The uploaded files (compose file, Dockerfiles, source) are placed in `/data/apps/<name>/` and `docker compose up -d` starts all services. Internal services like databases that don't need HTTP routing should be omitted from `config.services`.
+The uploaded files (compose file, Dockerfiles, source) are placed in `/data/apps/<name>/` (or `/data/apps/<folder>/<name>/` in a subfolder) and `docker compose up -d` starts all services. Internal services like databases that don't need HTTP routing should be omitted from `config.services`.
 
 > If you plan to contribute: `src/services/compose.ts` handles Docker Compose lifecycle, `src/services/docker.ts` handles single-container lifecycle.
 
@@ -178,13 +186,13 @@ The uploaded files (compose file, Dockerfiles, source) are placed in `/data/apps
 | `POST` | `/api/v1/apps/:name/restart` | Restart app |
 | `POST` | `/api/v1/apps/:name/stop` | Stop app |
 | `POST` | `/api/v1/apps/:name/start` | Start app |
+| `POST` | `/api/v1/apps/:name/move` | Move app into/out of a subfolder |
 | `GET` | `/api/v1/health` | Health check |
 
 All `/apps` endpoints require `Authorization: Bearer <MANAGEMENT_API_KEY>`.
 
-Full API docs in [api-docs.md](api-docs.md). AI agent usage examples in [skills.md](skills.md).
+Full API docs in [api-docs.md](api-docs.md). AI agent usage examples in [skills/leafdock/SKILL.md](skills/leafdock/SKILL.md).
 
-## Architecture
 ## Architecture
 
 ```
@@ -223,7 +231,8 @@ Full API docs in [api-docs.md](api-docs.md). AI agent usage examples in [skills.
 | `src/services/compose.ts` | Docker Compose lifecycle |
 | `specs.md` | Project specification |
 | `api-docs.md` | Full API reference |
-| `skills.md` | How-to guide for AI agents |
+| `skills/leafdock/SKILL.md` | How-to guide for AI agents |
+| `AGENTS.md` | Agent pointer to the skill file |
 ## Environment Variables
 
 | Variable | Default | Description |
