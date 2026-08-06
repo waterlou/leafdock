@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { initDb } from './db';
 import { authMiddleware } from './middleware/auth';
+import { jsonErrorHandler } from './middleware/json';
 import { syncRoutes } from './services/apps';
 import healthRouter from './routes/health';
 import appsRouter from './routes/apps';
@@ -338,6 +339,9 @@ async function main() {
 
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
+  // Lenient JSON: repair common AI mistakes (single quotes, unquoted keys,
+  // trailing commas); otherwise answer 400 in the documented error shape.
+  app.use(jsonErrorHandler);
 
   // Health check — no auth
   app.use('/api/v1/health', healthRouter);

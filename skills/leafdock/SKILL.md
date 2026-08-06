@@ -316,6 +316,8 @@ The app is reachable at `<INTRANET_HOST_URL>/my-api`. Caddy reverse-proxies to t
 
 Errors return: `{ error: { code, message } }`
 
+Send valid JSON (double quotes, quoted keys). The API tolerates common mistakes — single-quoted strings, unquoted keys, trailing commas — and repairs them, but rely on strict JSON for predictable results. `{"name":"my-app","type":"static"}` is the canonical form.
+
 | Code | Meaning |
 |------|---------|
 | `app_not_found` | No app with that name |
