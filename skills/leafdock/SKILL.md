@@ -5,6 +5,8 @@ description: Deploy and manage web apps on an internal Docker host via REST API.
 
 You have access to **Leafdock** — a Docker-based system that runs on the user's NAS and serves web apps under URL prefixes (e.g., `https://nas.ts.net/my-app`). You can deploy, update, list, and remove apps through its management API.
 
+Apps can live in **subfolders**: an app in folder `blog` is served at `https://nas.ts.net/blog/my-app` and stored on disk at `/data/apps/blog/<name>`. The landing page groups apps under their folder names. Folders can nest (`blog/tutorials`), and each folder segment follows the app-name rules (lowercase letters, digits, hyphens).
+
 ## Configuration
 
 Ask the user for these values if you don't already have them:
@@ -57,7 +59,7 @@ Key details:
 - All routed services automatically join the `leafdock_default` network, making them reachable from Caddy
 - Container names follow the pattern `ld-<appName>-<serviceName>` for stable routing
 - Use zip upload for compose apps with build context directories: `POST /apps/upload` with the full project as a zip
-- The app directory (`/data/apps/<name>/`) contains all uploaded files including the compose file and any build contexts (Dockerfiles, etc.)
+- The app directory (`/data/apps/<name>/`, or `/data/apps/<folder>/<name>/` for subfolder apps) contains all uploaded files including the compose file and any build contexts (Dockerfiles, etc.)
 
 ## API Reference
 
@@ -70,24 +72,29 @@ Content-Type: `application/json` (for text-only apps) or `multipart/form-data` (
 ### List Apps
 ```
 GET /apps
-→ { apps: [{ name, type, prefix, status, created_at, updated_at }] }
+→ { apps: [{ name, type, prefix, folder, status, created_at, updated_at }] }
 ```
 
 ### Get App
 ```
 GET /apps/:name
-→ { name, type, prefix, status, files: [{path, content}], config, created_at, updated_at }
+→ { name, type, prefix, folder, status, files: [{path, content}], config, created_at, updated_at }
 ```
 
 ### Create App
 ```
 POST /apps
-Body: { name, type, files: [{path, content}], config?, prefix? }
+Body: { name, type, files: [{path, content}], config?, prefix?, folder? }
 → 201 + full app object
 Errors: 409 name exists, 400 invalid name or prefix conflict
 ```
 
 Name rules: `^[a-z][a-z0-9]*(-[a-z0-9]+)*$` — lowercase, hyphens, must start with a letter. Examples: `todo-app`, `weather`, `api-gateway`.
+
+`folder` and `prefix` are mutually exclusive (400 if both given):
+- `folder: "blog"` → app served at `/blog/<name>`, stored at `/data/apps/blog/<name>`. `""` or omitted = root.
+- `prefix` sets the full URL prefix directly (e.g. `"/blog/hello"` also places the app in folder `blog`).
+A folder cannot collide with an existing app's URL tree (e.g. a root app named `blog` blocks creating apps in folder `blog`).
 
 ### Create App (Zip Upload) — RECOMMENDED
 ```
@@ -95,7 +102,7 @@ POST /apps/upload
 Multipart: file=@app.zip, config='{"name":"my-app","type":"static","config":{"spa":true}}'
 → 201 + full app object
 ```
-**Always use this method when the app has images, fonts, videos, or any binary files.** Send the entire app as a `.zip` file. The `config` field is a JSON string containing `name`, `type`, and optional `config` and `prefix`. The zip contents become the app's file structure.
+**Always use this method when the app has images, fonts, videos, or any binary files.** Send the entire app as a `.zip` file. The `config` field is a JSON string containing `name`, `type`, and optional `config`, `prefix`, and `folder` (same semantics as JSON create; `folder` puts the app in a subfolder, e.g. `"blog"`). The zip contents become the app's file structure.
 
 cURL example:
 ```bash
@@ -115,11 +122,11 @@ Multipart: file=@app.zip, config?='{"config":{"spa":false}}'
 ### Create App (JSON — text-only apps)
 ```
 POST /apps
-Body: { name, type, files: [{path, content}], config?, prefix? }
+Body: { name, type, files: [{path, content}], config?, prefix?, folder? }
 → 201 + full app object
 Errors: 409 name exists, 400 invalid name or prefix conflict
 ```
-Only use this for apps with NO binary files (no images, no fonts, no videos). Each file is sent as `{path, content}` with UTF-8 text content.
+Only use this for apps with NO binary files (no images, no fonts, no videos). Each file is sent as `{path, content}` with UTF-8 text content. `folder` works like in the generic Create App section above.
 
 ### Update App (full replace)
 ```
@@ -131,10 +138,26 @@ Body: { name, type, files: [{path, content}], config? }
 ### Update App (partial)
 ```
 PATCH /apps/:name
-Body: { config? } or { files? } or { prefix? }
+Body: { config? } or { files? } or { prefix? } or { folder? }
 → 200 + updated app object
 ```
-Providing `files` replaces ALL files. Providing `config` merges at the top level.
+Providing `files` replaces ALL files. Providing `config` merges at the top level. `prefix` or `folder` **moves** the app: files are relocated on disk, the route is swapped, and docker / docker-compose containers are recreated. Give one or the other, not both.
+
+### Move App
+```
+POST /apps/:name/move
+Body: { folder: "blog" }   // or { "folder": "" } to move back to root
+→ 200 + updated app object
+```
+Moves an app into or out of a subfolder (same as PATCH with `folder`). `""` moves it to the root. Moving to the folder it already lives in is a no-op (200).
+
+cURL example:
+```bash
+curl -X POST $INTRANET_HOST_URL/api/v1/apps/blog-todo/move \
+  -H "Authorization: Bearer $INTRANET_HOST_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"folder":"blog"}'
+```
 
 ### Delete App
 ```

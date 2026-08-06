@@ -37,6 +37,7 @@ export interface AppInput {
   name: string;
   type: 'static' | 'docker' | 'docker-compose';
   prefix?: string;
+  folder?: string;
   files: AppFile[];
   config?: AppConfig;
 }
@@ -45,6 +46,7 @@ export interface AppOutput {
   name: string;
   type: 'static' | 'docker' | 'docker-compose';
   prefix: string;
+  folder: string;
   status: 'running' | 'stopped' | 'error';
   files: AppFile[];
   config: AppConfig;
@@ -100,16 +102,71 @@ function normalizePrefix(prefix: string): string {
   return prefix.startsWith('/') ? prefix : `/${prefix}`;
 }
 
+// Folder = every prefix segment except the app name (the last one).
+// '/blog/post1' -> 'blog', '/post1' -> '' (root).
+function folderFromPrefix(prefix: string): string {
+  return prefix.split('/').slice(1, -1).join('/');
+}
+
+// Validate a folder path: drop empty segments (so 'a//b' -> 'a/b'), require every
+// segment to match the app-name charset. '' (or '/', '//') = root. Rejects '..',
+// '.', uppercase, underscores, and anything else outside NAME_REGEX.
+function validateFolder(folder: string): string {
+  const segments = folder.split('/').filter(s => s.length > 0);
+  for (const segment of segments) {
+    if (!NAME_REGEX.test(segment)) {
+      throw new ValidationError(`Invalid folder path: ${folder}`);
+    }
+  }
+  return segments.join('/');
+}
+
+// Move keeps the prefix tail (custom prefixes like '/foo' stay '/blog/foo' when
+// moved into folder 'blog' — only the folder part is replaced).
+function prefixForMove(existing: db.AppRow, newFolder: string): string {
+  const folder = folderFromPrefix(existing.prefix);
+  const tail = folder ? existing.prefix.slice(folder.length + 1) : existing.prefix;
+  return newFolder ? `/${newFolder}${tail}` : tail;
+}
+
+// Conflict when another app owns the exact prefix, or the new prefix would be
+// shadowed by / shadow an existing prefix (tree overlap).
+function findPrefixConflict(prefix: string, exceptName?: string): db.AppRow | null {
+  for (const row of db.listApps()) {
+    if (row.name === exceptName) continue;
+    if (row.prefix === prefix) return row;
+    if (prefix.startsWith(row.prefix + '/')) return row;
+    if (row.prefix.startsWith(prefix + '/')) return row;
+  }
+  return null;
+}
+
+// Exact collision keeps the 'already in use' message (handleError -> prefix_conflict);
+// tree conflicts are plain validation errors.
+function throwIfPrefixConflict(prefix: string, exceptName?: string): void {
+  const conflict = findPrefixConflict(prefix, exceptName);
+  if (!conflict) return;
+  if (conflict.prefix === prefix) {
+    throw new ValidationError(`Prefix "${prefix}" is already in use`);
+  }
+  throw new ValidationError(`Prefix "${prefix}" conflicts with existing app at "${conflict.prefix}"`);
+}
+
 function getDataDir(): string {
   return process.env.DATA_DIR || '/data';
 }
 
-function appDir(name: string): string {
-  return path.join(getDataDir(), 'apps', name);
+// Explicit folder when the caller has it (input, row, or move target); otherwise
+// derive from the stored prefix (only valid once the row exists in the DB).
+function appDir(name: string, folder?: string): string {
+  if (folder === undefined) {
+    folder = folderFromPrefix(db.getApp(name)?.prefix ?? '');
+  }
+  return path.join(getDataDir(), 'apps', ...(folder ? [folder] : []), name);
 }
 
-function writeFiles(name: string, files: AppFile[]): void {
-  const dir = appDir(name);
+function writeFiles(name: string, folder: string, files: AppFile[]): void {
+  const dir = appDir(name, folder);
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
 
@@ -132,8 +189,8 @@ function writeFiles(name: string, files: AppFile[]): void {
   }
 }
 
-function readFiles(name: string): AppFile[] {
-  const dir = appDir(name);
+function readFiles(name: string, folder: string): AppFile[] {
+  const dir = appDir(name, folder);
   if (!fs.existsSync(dir)) return [];
 
   const files: AppFile[] = [];
@@ -219,22 +276,24 @@ function rowToOutput(row: db.AppRow): AppOutput {
     name: row.name,
     type: row.type,
     prefix: row.prefix,
+    folder: folderFromPrefix(row.prefix),
     status: row.status,
     config,
-    files: readFiles(row.name),
+    files: readFiles(row.name, folderFromPrefix(row.prefix)),
     title: extractTitle(row.name, config) || undefined,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
 }
 
-export function listApps(): { name: string; type: string; prefix: string; status: string; title?: string; created_at: string; updated_at: string }[] {
+export function listApps(): { name: string; type: string; prefix: string; folder: string; status: string; title?: string; created_at: string; updated_at: string }[] {
   return db.listApps().map(row => {
     const config = JSON.parse(row.config);
     return {
       name: row.name,
       type: row.type,
       prefix: row.prefix,
+      folder: folderFromPrefix(row.prefix),
       status: row.status,
       title: extractTitle(row.name, config) || undefined,
       created_at: row.created_at,
@@ -263,21 +322,30 @@ export function downloadAppZip(name: string): Buffer {
 export async function createApp(input: AppInput): Promise<AppOutput> {
   validateName(input.name);
 
-  const prefix = normalizePrefix(input.prefix || prefixFromName(input.name));
+  if (input.folder !== undefined && input.prefix !== undefined) {
+    throw new ValidationError('Provide either folder or prefix, not both');
+  }
+
+  // Folder and prefix are two views of the same location: folder drives the disk
+  // layout, prefix drives the URL. Derive one from the other so a nested prefix
+  // like '/blog/x' also gets a real directory.
+  let folder = input.folder !== undefined ? validateFolder(input.folder) : '';
+  const prefix = input.folder !== undefined
+    ? (folder ? `/${folder}/${input.name}` : `/${input.name}`)
+    : normalizePrefix(input.prefix || prefixFromName(input.name));
+  folder = folderFromPrefix(prefix);
 
   if (db.appExists(input.name)) {
     throw new ValidationError(`App "${input.name}" already exists`);
   }
 
-  if (db.prefixExists(prefix)) {
-    throw new ValidationError(`Prefix "${prefix}" is already in use`);
-  }
+  throwIfPrefixConflict(prefix);
 
   const now = new Date().toISOString();
   const config = mergeConfig(input.type, undefined, input.config);
 
   // Write files to disk
-  writeFiles(input.name, input.files);
+  writeFiles(input.name, folder, input.files);
 
   let containerId: string | null = null;
 
@@ -285,11 +353,11 @@ export async function createApp(input: AppInput): Promise<AppOutput> {
     if (input.type === 'docker') {
       const dockerConfig = config as DockerAppConfig;
       await docker.pullImage(dockerConfig.image);
-      containerId = await docker.createContainer(input.name, appDir(input.name), dockerConfig);
+      containerId = await docker.createContainer(input.name, appDir(input.name, folder), dockerConfig);
       await caddy.addDockerRoute(prefix, containerId, dockerConfig.port);
     } else if (input.type === 'docker-compose') {
       const composeConfig = config as DockerComposeAppConfig;
-      await compose.composeUp(input.name, composeConfig.services);
+      await compose.composeUp(input.name, folder, composeConfig.services);
       await addComposeRoutes(prefix, input.name, composeConfig.services);
       containerId = JSON.stringify(
         Object.keys(composeConfig.services).reduce((acc, s) => {
@@ -299,11 +367,11 @@ export async function createApp(input: AppInput): Promise<AppOutput> {
       );
     } else {
       const staticConfig = config as StaticAppConfig;
-      await caddy.addStaticRoute(prefix, appDir(input.name), staticConfig.spa, staticConfig.index);
+      await caddy.addStaticRoute(prefix, appDir(input.name, folder), staticConfig.spa, staticConfig.index);
     }
   } catch (err) {
     // Clean up files on failure
-    fs.rmSync(appDir(input.name), { recursive: true, force: true });
+    fs.rmSync(appDir(input.name, folder), { recursive: true, force: true });
     throw err;
   }
 
@@ -326,22 +394,22 @@ export async function createAppFromZip(
   name: string,
   type: 'static' | 'docker' | 'docker-compose',
   zipPath: string,
-  appConfig?: AppConfig
+  appConfig?: AppConfig,
+  folder?: string
 ): Promise<AppOutput> {
   validateName(name);
 
-  const prefix = prefixFromName(name);
+  const folderNorm = validateFolder(folder ?? '');
+  const prefix = folderNorm ? `/${folderNorm}/${name}` : `/${name}`;
 
   if (db.appExists(name)) {
     throw new ValidationError(`App "${name}" already exists`);
   }
 
-  if (db.prefixExists(prefix)) {
-    throw new ValidationError(`Prefix "${prefix}" is already in use`);
-  }
+  throwIfPrefixConflict(prefix);
 
   // Extract zip to app directory
-  const dir = appDir(name);
+  const dir = appDir(name, folderNorm);
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
 
@@ -362,7 +430,7 @@ export async function createAppFromZip(
       await caddy.addDockerRoute(prefix, containerId, dockerConfig.port);
     } else if (type === 'docker-compose') {
       const composeConfig = config as DockerComposeAppConfig;
-      await compose.composeUp(name, composeConfig.services);
+      await compose.composeUp(name, folderNorm, composeConfig.services);
       await addComposeRoutes(prefix, name, composeConfig.services);
       containerId = JSON.stringify(
         Object.keys(composeConfig.services).reduce((acc, s) => {
@@ -435,9 +503,9 @@ export async function updateAppFromZip(
       const [serviceName] = entries[i];
       try { await caddy.removeRoute(`${prefix}/${serviceName}`); } catch {}
     }
-    await compose.composeDown(name);
+    await compose.composeDown(name, folderFromPrefix(prefix));
     const composeConfig = merged as DockerComposeAppConfig;
-    await compose.composeUp(name, composeConfig.services);
+    await compose.composeUp(name, folderFromPrefix(prefix), composeConfig.services);
     await addComposeRoutes(prefix, name, composeConfig.services);
     updates.container_id = JSON.stringify(
       Object.keys(composeConfig.services).reduce((acc, s) => {
@@ -454,22 +522,114 @@ export async function updateAppFromZip(
   return rowToOutput(db.getApp(name)!);
 }
 
+// Single implementation for every location change (folder move, prefix rename):
+// relocates files, swaps Caddy routes, recreates containers when running.
+// `files` present = full replacement semantics (old files obsolete); absent =
+// rename the existing directory (refusing to overwrite an unknown target dir).
+async function applyMove(
+  existing: db.AppRow,
+  newFolder: string,
+  newPrefix: string,
+  files: AppFile[] | null
+): Promise<void> {
+  throwIfPrefixConflict(newPrefix, existing.name);
+
+  const oldFolder = folderFromPrefix(existing.prefix);
+  const oldDir = appDir(existing.name, oldFolder);
+  const newDir = appDir(existing.name, newFolder);
+  const running = existing.status !== 'stopped';
+
+  // docker-compose must be brought down from the old dir before it is moved
+  if (existing.type === 'docker-compose' && running) {
+    await compose.composeDown(existing.name, oldFolder);
+  }
+
+  if (files) {
+    writeFiles(existing.name, newFolder, files);
+    if (oldDir !== newDir) {
+      fs.rmSync(oldDir, { recursive: true, force: true });
+    }
+  } else {
+    if (fs.existsSync(newDir) && newDir !== oldDir) {
+      throw new ValidationError('Target app directory already exists');
+    }
+    if (fs.existsSync(oldDir)) {
+      fs.mkdirSync(path.dirname(newDir), { recursive: true });
+      fs.renameSync(oldDir, newDir);
+    }
+  }
+
+  const merged = mergeConfig(existing.type, existing.config);
+
+  // Routes (stopped apps get routes too — matches historical prefix-update
+  // behavior; stopApp removes them again on the next stop)
+  if (existing.type === 'docker-compose') {
+    const oldServices = (JSON.parse(existing.config) as DockerComposeAppConfig).services;
+    await removeComposeRoutes(existing.prefix, oldServices);
+    await addComposeRoutes(newPrefix, existing.name, (merged as DockerComposeAppConfig).services);
+  } else if (existing.type === 'docker') {
+    await caddy.removeRoute(existing.prefix);
+    await caddy.addDockerRoute(newPrefix, docker.containerNameForApp(existing.name), (merged as DockerAppConfig).port);
+  } else {
+    await caddy.removeRoute(existing.prefix);
+    const staticConfig = merged as StaticAppConfig;
+    await caddy.addStaticRoute(newPrefix, newDir, staticConfig.spa, staticConfig.index);
+  }
+
+  // Containers: only for running apps; stopped apps are rebuilt on startApp
+  // from the new folder (its appDir(name) lookup resolves it)
+  if (running) {
+    if (existing.type === 'docker') {
+      // createContainer removes the old container (stale mount) and recreates
+      // with the new dir; container_id is name-based so it stays unchanged
+      await docker.createContainer(existing.name, newDir, merged as DockerAppConfig);
+    } else if (existing.type === 'docker-compose') {
+      await compose.composeUp(existing.name, newFolder, (merged as DockerComposeAppConfig).services);
+    }
+  }
+}
+
+export async function moveApp(name: string, folder: string): Promise<AppOutput> {
+  return updateApp(name, { folder });
+}
+
 export async function updateApp(name: string, input: Partial<AppInput>): Promise<AppOutput> {
   const existing = db.getApp(name);
   if (!existing) throw new ValidationError(`App "${name}" not found`);
 
+  if (input.folder !== undefined && input.prefix !== undefined) {
+    throw new ValidationError('Provide either folder or prefix, not both');
+  }
+
   const now = new Date().toISOString();
   const updates: Parameters<typeof db.updateApp>[1] = { updated_at: now };
 
+  // Resolve the move target: folder and prefix are two views of one location
+  let newPrefix: string | null = null;
+  let newFolder: string | null = null;
+  if (input.prefix) {
+    newPrefix = normalizePrefix(input.prefix);
+    newFolder = folderFromPrefix(newPrefix);
+  } else if (input.folder !== undefined) {
+    newFolder = validateFolder(input.folder);
+    newPrefix = prefixForMove(existing, newFolder);
+  }
+  const moved = newPrefix !== null && newPrefix !== existing.prefix;
+
   // Parse + validate stored config only when this update consumes it, so a corrupt
   // stored config can't break updates that don't touch config (e.g. files or prefix only).
-  const merged: AppConfig | null = input.config || input.files || input.prefix
+  const merged: AppConfig | null = input.config || input.files || moved
     ? mergeConfig(existing.type, existing.config, input.config)
     : null;
 
-  // Update files if provided
-  if (input.files) {
-    writeFiles(name, input.files);
+  let currentPrefix = existing.prefix;
+
+  // Update files / location
+  if (moved) {
+    await applyMove(existing, newFolder!, newPrefix!, input.files ?? null);
+    currentPrefix = newPrefix!;
+  } else if (input.files) {
+    writeFiles(name, folderFromPrefix(existing.prefix), input.files);
   }
 
   // Update config if provided — merge with defaults and stored config so partial configs don't lose fields
@@ -477,30 +637,8 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
     updates.config = JSON.stringify(merged);
   }
 
-  // Update prefix if provided
-  const newPrefix = input.prefix ? normalizePrefix(input.prefix) : null;
-  if (newPrefix && newPrefix !== existing.prefix) {
-    if (db.prefixExists(newPrefix)) {
-      throw new ValidationError(`Prefix "${newPrefix}" is already in use`);
-    }
-    // Remove old Caddy route, add new one
-    if (existing.type === 'docker-compose') {
-      const oldComposeConfig = JSON.parse(existing.config) as DockerComposeAppConfig;
-      await removeComposeRoutes(existing.prefix, oldComposeConfig.services);
-    } else {
-      await caddy.removeRoute(existing.prefix);
-    }
-
-    if (existing.type === 'docker') {
-      const dockerConfig = merged! as DockerAppConfig;
-      const containerName = docker.containerNameForApp(existing.name);
-      await caddy.addDockerRoute(newPrefix, containerName, dockerConfig.port);
-    } else if (existing.type === 'docker-compose') {
-      const composeConfig = merged! as DockerComposeAppConfig;
-      await addComposeRoutes(newPrefix, name, composeConfig.services);
-    }
-
-    updates.prefix = newPrefix;
+  if (moved) {
+    updates.prefix = newPrefix!;
   }
 
   // If docker app and config changed, restart container
@@ -511,32 +649,30 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
       // Container might not exist, recreate it
       const dockerConfig = merged! as DockerAppConfig;
       await docker.pullImage(dockerConfig.image);
-      const containerId = await docker.createContainer(name, appDir(name), dockerConfig);
+      const containerId = await docker.createContainer(name, appDir(name, folderFromPrefix(currentPrefix)), dockerConfig);
       updates.container_id = containerId;
 
-      const prefix = input.prefix || existing.prefix;
-      await caddy.removeRoute(prefix);
-      await caddy.addDockerRoute(prefix, containerId, dockerConfig.port);
+      await caddy.removeRoute(currentPrefix);
+      await caddy.addDockerRoute(currentPrefix, containerId, dockerConfig.port);
     }
   }
 
-  // If static app and config, files, or prefix changed, update route
-  if (existing.type === 'static' && (input.config || input.files || newPrefix)) {
+  // If static app and config, files, or location changed, update route
+  if (existing.type === 'static' && (input.config || input.files || moved)) {
     const staticConfig = merged! as StaticAppConfig;
-    const prefix = input.prefix || existing.prefix;
-    await caddy.removeRoute(prefix);
-    await caddy.addStaticRoute(prefix, appDir(name), staticConfig.spa, staticConfig.index);
+    await caddy.removeRoute(currentPrefix);
+    await caddy.addStaticRoute(currentPrefix, appDir(name, folderFromPrefix(currentPrefix)), staticConfig.spa, staticConfig.index);
   }
 
   // If docker-compose app and config or files changed, restart compose
+  // (double restart right after a move is idempotent)
   if (existing.type === 'docker-compose' && (input.config || input.files)) {
     const oldConfig = JSON.parse(existing.config) as DockerComposeAppConfig;
     const composeConfig = merged! as DockerComposeAppConfig;
-    const prefix = input.prefix || existing.prefix;
-    await removeComposeRoutes(prefix, oldConfig.services);
-    await compose.composeDown(name);
-    await compose.composeUp(name, composeConfig.services);
-    await addComposeRoutes(prefix, name, composeConfig.services);
+    await removeComposeRoutes(currentPrefix, oldConfig.services);
+    await compose.composeDown(name, folderFromPrefix(currentPrefix));
+    await compose.composeUp(name, folderFromPrefix(currentPrefix), composeConfig.services);
+    await addComposeRoutes(currentPrefix, name, composeConfig.services);
     updates.container_id = JSON.stringify(
       Object.keys(composeConfig.services).reduce((acc, s) => {
         acc[s] = composeContainerName(name, s);
@@ -579,7 +715,7 @@ export async function deleteApp(name: string): Promise<void> {
     }
   } else if (existing.type === 'docker-compose') {
     try {
-      await compose.composeDown(name);
+      await compose.composeDown(name, folderFromPrefix(existing.prefix));
     } catch {
       // Compose project might not exist
     }
@@ -601,7 +737,7 @@ export async function getLogs(name: string, tail: number): Promise<string> {
   }
 
   if (existing.type === 'docker-compose') {
-    return compose.composeLogs(name, tail);
+    return compose.composeLogs(name, folderFromPrefix(existing.prefix), tail);
   }
 
   // For static apps, check Caddy access logs
@@ -632,8 +768,8 @@ export async function restartApp(name: string): Promise<AppOutput> {
     await docker.restartContainer(name);
   } else if (existing.type === 'docker-compose') {
     const config = JSON.parse(existing.config) as DockerComposeAppConfig;
-    await compose.composeDown(name);
-    await compose.composeUp(name, config.services);
+    await compose.composeDown(name, folderFromPrefix(existing.prefix));
+    await compose.composeUp(name, folderFromPrefix(existing.prefix), config.services);
   }
 
   return rowToOutput(db.getApp(name)!);
@@ -669,7 +805,7 @@ export async function stopApp(name: string): Promise<AppOutput> {
     }
   } else if (existing.type === 'docker-compose') {
     try {
-      await compose.composeDown(name);
+      await compose.composeDown(name, folderFromPrefix(existing.prefix));
     } catch {
       // Compose project might not exist
     }
@@ -697,7 +833,7 @@ export async function startApp(name: string): Promise<AppOutput> {
     updates.container_id = containerId;
   } else if (existing.type === 'docker-compose') {
     const composeConfig = config as DockerComposeAppConfig;
-    await compose.composeUp(name, composeConfig.services);
+    await compose.composeUp(name, folderFromPrefix(existing.prefix), composeConfig.services);
     await addComposeRoutes(existing.prefix, name, composeConfig.services);
     updates.container_id = JSON.stringify(
       Object.keys(composeConfig.services).reduce((acc, s) => {
@@ -723,6 +859,15 @@ export async function syncRoutes(): Promise<void> {
     } catch {
       await new Promise(r => setTimeout(r, 1000));
     }
+  }
+
+  // Drop all existing app routes (legacy ids, drift), then rebuild from DB rows.
+  // Caddy being unreachable at boot must not kill the server — routes are
+  // best-effort here and per-app below.
+  try {
+    await caddy.clearAppRoutes();
+  } catch (err) {
+    console.error('Failed to clear app routes:', err);
   }
 
   const rows = db.listApps();

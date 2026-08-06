@@ -46,11 +46,17 @@ router.post('/upload', uploadMiddleware, async (req: Request, res: Response) => 
       return;
     }
 
+    if (config.folder !== undefined && typeof config.folder !== 'string') {
+      res.status(400).json({ error: { code: 'validation_error', message: '"folder" must be a string.' } });
+      return;
+    }
+
     const app = await apps.createAppFromZip(
       config.name,
       config.type,
       files.file[0].path,
-      config.config
+      config.config,
+      config.folder
     );
     res.status(201).json(app);
   } catch (err) {
@@ -184,6 +190,23 @@ router.post('/:name/stop', async (req: Request, res: Response) => {
 router.post('/:name/start', async (req: Request, res: Response) => {
   try {
     const app = await apps.startApp(param(req, 'name'));
+    res.json(app);
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// POST /api/v1/apps/:name/move
+router.post('/:name/move', async (req: Request, res: Response) => {
+  try {
+    const folder = req.body?.folder;
+    if (typeof folder !== 'string') {
+      res.status(400).json({
+        error: { code: 'validation_error', message: 'folder is required' },
+      });
+      return;
+    }
+    const app = await apps.moveApp(param(req, 'name'), folder);
     res.json(app);
   } catch (err) {
     handleError(res, err);

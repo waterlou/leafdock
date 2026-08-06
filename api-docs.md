@@ -30,6 +30,7 @@ Returns a summary list of all registered apps (without file contents).
       "name": "todo-app",
       "type": "static",
       "prefix": "/todo-app",
+      "folder": "",
       "status": "running",
       "created_at": "2026-05-14T10:00:00Z",
       "updated_at": "2026-05-14T10:00:00Z"
@@ -71,6 +72,7 @@ Register a new app. The request includes the app name, type, all source files, a
 | `name` | yes | URL-safe slug. Must match `^[a-z0-9]+(-[a-z0-9]+)*$` |
 | `type` | yes | `"static"`, `"docker"`, or `"docker-compose"` |
 | `prefix` | no | URL prefix. Defaults to `/<name>` |
+| `folder` | no | Optional subfolder (e.g. `"blog"` or `"blog/tutorials"`). Mutually exclusive with `prefix`. `""` (or omitted) = root. The disk layout mirrors it: an app in folder `blog` lives at `<data>/apps/blog/<name>` and is served at `/blog/<name>/`. |
 | `files` | yes | Array of `{path, content, encoding?}` objects. For binary files (images, video), set `encoding: "base64"` and base64-encode the content. |
 | `config` | no | Type-specific config (see below) |
 
@@ -107,6 +109,7 @@ Only services that need HTTP routing should be listed in `services`. The first s
   "name": "todo-app",
   "type": "static",
   "prefix": "/todo-app",
+  "folder": "",
   "status": "running",
   "files": [
     { "path": "index.html", "content": "<!DOCTYPE html>..." },
@@ -146,6 +149,7 @@ The `config` field is a text field containing a JSON object:
 {
   "name": "photo-gallery",
   "type": "static",
+  "folder": "blog",
   "config": {
     "index": "index.html",
     "spa": true
@@ -153,7 +157,7 @@ The `config` field is a text field containing a JSON object:
 }
 ```
 
-The config JSON supports the same fields as the JSON Create App endpoint, except `files` (they come from the zip) and `prefix` (auto-derived from name).
+The config JSON supports the same fields as the JSON Create App endpoint, except `files` (they come from the zip) and `prefix` (auto-derived from name). `folder` is supported: it selects the subfolder (same semantics as JSON create), otherwise the app is created at the root.
 
 **Response 201:** Full app object (same shape as JSON create).
 
@@ -280,10 +284,43 @@ Partial update. Only include the fields you want to change. When `files` is prov
 }
 ```
 
+**Moving an app:** `prefix` (or `folder`) relocates the app — files on disk are moved, the Caddy route is swapped, and docker / docker-compose containers are recreated. Provide one or the other, not both. `folder` moves the app while keeping any custom prefix tail (e.g. `"/foo"` → `"/blog/foo"`); `prefix` sets the full URL.
+
 **Response 200:** Updated app object.
 
 **Errors:**
 - `404` — App not found
+
+---
+
+### Move App
+
+```
+POST /apps/:name/move
+```
+
+Move an app into or out of a subfolder. Files on disk are relocated (`<data>/apps/blog/<name>` ↔ `<data>/apps/<name>`), the Caddy route is swapped, and docker / docker-compose containers are recreated for running apps. Stopped apps are moved on disk and their routes; containers are rebuilt on the next start.
+
+**Request body:**
+```json
+{ "folder": "blog" }
+```
+
+`""` moves the app back to the root. Moving to the folder the app already lives in is a no-op (200).
+
+**Response 200:** Updated app object (with the new `prefix` / `folder`).
+
+**Errors:**
+- `404` — App not found
+- `400` — Missing or invalid `folder`, prefix conflict, or target directory already occupied
+
+**cURL example:**
+```bash
+curl -X POST https://nas.ts.net/api/v1/apps/blog-todo/move \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"folder":"blog"}'
+```
 
 ---
 

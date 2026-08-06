@@ -38,15 +38,28 @@ async function setRoutes(routes: CaddyRoute[]): Promise<void> {
   }
 }
 
+// Route ids must be injective per prefix: encodeURIComponent never emits '/'
+// from folder/name characters, so '/a/b' ('app-%2Fa%2Fb') can never collide with
+// an app named 'a-b' ('app-a-b'). The 'app-r-' redirect ids are disjoint from
+// 'app-' serve ids by construction.
+function routeIdFor(prefix: string): string {
+  return 'app-' + encodeURIComponent(prefix);
+}
+
+function routeIdForRoot(prefix: string): string {
+  return 'app-r-' + encodeURIComponent(prefix);
+}
+
 export async function addStaticRoute(prefix: string, appDir: string, spa: boolean, index: string): Promise<void> {
   const routes = await getRoutes();
-  const routeId = `app-${prefix.replace(/^\//, '').replace(/\//g, '-')}`;
+  const routeId = routeIdFor(prefix);
+  const rootId = routeIdForRoot(prefix);
 
-  const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== routeId + '-root');
+  const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== rootId);
 
   // Redirect exact prefix to prefix/ so relative URLs in HTML resolve correctly
   const redirectRoute: CaddyRoute = {
-    '@id': routeId + '-root',
+    '@id': rootId,
     match: [{ path: [prefix] }],
     handle: [{
       handler: 'static_response',
@@ -90,13 +103,14 @@ export async function addStaticRoute(prefix: string, appDir: string, spa: boolea
 
 export async function addDockerRoute(prefix: string, containerName: string, port: number): Promise<void> {
   const routes = await getRoutes();
-  const routeId = `app-${prefix.replace(/^\//, '').replace(/\//g, '-')}`;
+  const routeId = routeIdFor(prefix);
+  const rootId = routeIdForRoot(prefix);
 
-  const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== routeId + '-root');
+  const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== rootId);
 
   // Redirect exact prefix to prefix/ so relative URLs in HTML resolve correctly
   const redirectRoute: CaddyRoute = {
-    '@id': routeId + '-root',
+    '@id': rootId,
     match: [{ path: [prefix] }],
     handle: [{
       handler: 'static_response',
@@ -121,7 +135,17 @@ export async function addDockerRoute(prefix: string, containerName: string, port
 
 export async function removeRoute(prefix: string): Promise<void> {
   const routes = await getRoutes();
-  const routeId = `app-${prefix.replace(/^\//, '').replace(/\//g, '-')}`;
-  const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== routeId + '-root');
+  const routeId = routeIdFor(prefix);
+  const rootId = routeIdForRoot(prefix);
+  const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== rootId);
+  await setRoutes(filtered);
+}
+
+// Drop every Leafdock-owned route (legacy 'app-<name>' ids and current
+// 'app-%2F...' / 'app-r-%2F...' ids). Routes are rebuilt from DB rows on boot,
+// which migrates legacy ids and self-heals drift.
+export async function clearAppRoutes(): Promise<void> {
+  const routes = await getRoutes();
+  const filtered = routes.filter(r => !r['@id'] || !r['@id'].startsWith('app-'));
   await setRoutes(filtered);
 }

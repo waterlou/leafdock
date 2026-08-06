@@ -46,6 +46,7 @@ function ensureLandingPage(): void {
   .apps { list-style: none; text-align: left; }
   .apps li { padding: 12px 16px; border: 1px solid var(--card-border); border-radius: 8px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
   .apps li:hover { background: var(--hover); }
+  .folder-header { color: var(--muted); font-weight: 600; font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; padding: 8px 16px 4px; }
   .app-name { color: var(--link); font-weight: 600; text-decoration: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: left; }
   .app-name:hover { text-decoration: underline; }
   .app-info { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
@@ -97,6 +98,17 @@ var moonSVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" strok
 var appsData = [];
 var editing = false;
 
+function appItemHtml(a, depth) {
+  var pad = 28 + (depth || 0) * 16;
+  return '<li style="padding-left:' + pad + 'px">' +
+    '<a href="' + a.prefix + '/" class="app-name">' + (a.title || a.name) + '</a>' +
+    '<span class="app-info"><span class="app-type">' + a.type + '</span> <span class="status ' + a.status + '"' + (editing ? ' data-action="toggle-status" data-name="' + a.name + '"' : '') + '>' + a.status + '</span></span>' +
+    '<span class="app-actions">' +
+      '<button class="exp-btn" data-name="' + a.name + '">Export</button>' +
+      '<button class="del-btn" data-name="' + a.name + '">Delete</button>' +
+    '</span></li>';
+}
+
 function renderApps(container, apps, sortBy) {
   appsData = apps;
   var filtered = editing ? apps : apps.filter(function(a) { return a.status === 'running'; });
@@ -108,15 +120,25 @@ function renderApps(container, apps, sortBy) {
     container.innerHTML = '<div class="empty">' + (editing ? 'No apps. Deploy one using the API.' : 'No apps deployed yet.') + '</div>';
     return;
   }
-  container.innerHTML = '<ul class="apps' + (editing ? ' editing' : '') + '">' + sorted.map(function(a) {
-    return '<li>' +
-      '<a href="' + a.prefix + '/" class="app-name">' + (a.title || a.name) + '</a>' +
-      '<span class="app-info"><span class="app-type">' + a.type + '</span> <span class="status ' + a.status + '"' + (editing ? ' data-action="toggle-status" data-name="' + a.name + '"' : '') + '>' + a.status + '</span></span>' +
-      '<span class="app-actions">' +
-        '<button class="exp-btn" data-name="' + a.name + '">Export</button>' +
-        '<button class="del-btn" data-name="' + a.name + '">Delete</button>' +
-      '</span></li>';
-  }).join('') + '</ul>';
+  // Group by folder: root apps first (no header), then folders sorted by name.
+  // Depth = folder segment count, so nested folders indent further.
+  var groups = {};
+  sorted.forEach(function(a) {
+    var f = a.folder || '';
+    if (!groups[f]) groups[f] = [];
+    groups[f].push(a);
+  });
+  var folderNames = Object.keys(groups).filter(function(f) { return f !== ''; })
+    .sort(function(a, b) { return a.localeCompare(b); });
+  var html = '<ul class="apps' + (editing ? ' editing' : '') + '">';
+  (groups[''] || []).forEach(function(a) { html += appItemHtml(a, 0); });
+  folderNames.forEach(function(folder) {
+    var depth = folder.split('/').length;
+    html += '<li class="folder-header" style="padding-left:' + (12 + depth * 16) + 'px">' + folder + '</li>';
+    groups[folder].forEach(function(a) { html += appItemHtml(a, depth); });
+  });
+  html += '</ul>';
+  container.innerHTML = html;
 }
 
 function getKey() { return localStorage.getItem('apiKey') || ''; }

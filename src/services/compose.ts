@@ -20,12 +20,12 @@ function generateNetworkOverride(name: string, services: Record<string, { port: 
   return yaml;
 }
 
-function composeDir(name: string): string {
-  return path.join(process.env.DATA_DIR || '/data', 'apps', name);
+function composeDir(name: string, folder = ''): string {
+  return path.join(process.env.DATA_DIR || '/data', 'apps', ...(folder ? [folder] : []), name);
 }
 
-export async function composeUp(name: string, services: Record<string, { port: number }>): Promise<void> {
-  const dir = composeDir(name);
+export async function composeUp(name: string, folder: string, services: Record<string, { port: number }>): Promise<void> {
+  const dir = composeDir(name, folder);
   const networkFile = path.join(dir, 'docker-compose.network.yml');
 
   // Write network override so services join the Caddy network
@@ -37,8 +37,8 @@ export async function composeUp(name: string, services: Record<string, { port: n
   });
 }
 
-export async function composeDown(name: string): Promise<void> {
-  const dir = composeDir(name);
+export async function composeDown(name: string, folder: string): Promise<void> {
+  const dir = composeDir(name, folder);
   try {
     await execAsync(`docker compose -p ${projectName(name)} down --remove-orphans`, { cwd: dir });
   } catch {
@@ -49,18 +49,8 @@ export async function composeDown(name: string): Promise<void> {
   try { fs.rmSync(networkFile); } catch {}
 }
 
-export async function composeDownForDir(dir: string): Promise<void> {
-  try {
-    await execAsync(`docker compose down --remove-orphans`, { cwd: dir });
-  } catch {
-    // Project might not exist
-  }
-  const networkFile = path.join(dir, 'docker-compose.network.yml');
-  try { fs.rmSync(networkFile); } catch {}
-}
-
-export async function composeLogs(name: string, tail: number): Promise<string> {
-  const dir = composeDir(name);
+export async function composeLogs(name: string, folder: string, tail: number): Promise<string> {
+  const dir = composeDir(name, folder);
   try {
     const { stdout } = await execAsync(
       `docker compose -p ${projectName(name)} logs --tail=${tail} --no-color 2>&1`,

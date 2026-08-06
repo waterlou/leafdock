@@ -1,6 +1,8 @@
 {
     admin 127.0.0.1:2019 {
-        origins localhost
+        # The management API fetches http://localhost:2019 (Host includes the
+        # port); allow both forms, loopback-only for rebinding protection.
+        origins localhost localhost:2019
     }
 }
 

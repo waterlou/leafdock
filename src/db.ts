@@ -100,14 +100,6 @@ export function appExists(name: string): boolean {
   return getApp(name) !== null;
 }
 
-export function prefixExists(prefix: string): boolean {
-  const stmt = db.prepare('SELECT 1 FROM apps WHERE prefix = ?');
-  stmt.bind([prefix]);
-  const exists = stmt.step();
-  stmt.free();
-  return exists;
-}
-
 export function createApp(app: AppRow): void {
   db.run(
     'INSERT INTO apps (name, type, prefix, status, config, container_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
