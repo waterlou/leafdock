@@ -100,6 +100,14 @@ npm run build
 npm start
 ```
 
+Or run the whole stack with one command — ports are assigned automatically so nothing collides (pin them with `API_PORT=` / `HTTP_PORT=` if you need them stable):
+
+```bash
+npm run start:local
+```
+
+It prints the API and landing-page URLs, runs Caddy and the management API together, and stops Caddy when you Ctrl-C. `DATA_DIR` defaults to `./data`.
+
 For development with auto-reload:
 ```bash
 npm run dev

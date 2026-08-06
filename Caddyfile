@@ -9,7 +9,7 @@
 :{$HTTP_PORT:80} {
     # Management API
     handle /api/* {
-        reverse_proxy localhost:3001
+        reverse_proxy localhost:{$API_PORT:3001}
     }
 
     # Landing page — serve index.html for all unmatched paths

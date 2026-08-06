@@ -5,6 +5,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:local": "bash scripts/start-local.sh",
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
