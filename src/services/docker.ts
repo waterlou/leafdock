@@ -19,7 +19,7 @@ export function containerNameForApp(name: string): string {
 
 export async function createContainer(
   appName: string,
-  appDir: string,
+  workDir: string,
   config: DockerAppConfig
 ): Promise<string> {
   const containerName = containerNameForApp(appName);
@@ -31,7 +31,7 @@ export async function createContainer(
   // Builds share the app volume, so outputs (node_modules/.next) persist and
   // the app container's command is just the run command — restarts stay fast.
   if (config.build_command) {
-    await runBuildContainer(appName, config);
+    await runBuildContainer(appName, workDir, config);
   }
 
   const envVars = Object.entries(config.env).map(([k, v]) => `${k}=${v}`);
@@ -42,7 +42,7 @@ export async function createContainer(
     Image: config.image,
     Env: envVars,
     Cmd: runCmd ? ['sh', '-c', runCmd] : undefined,
-    WorkingDir: `/app/apps/${appName}`,
+    WorkingDir: workDir,
     ExposedPorts: {
       [`${config.port}/tcp`]: {},
     },
@@ -67,7 +67,7 @@ export async function createContainer(
 
 // Run config.build_command to completion in a throwaway container. Failures
 // surface the container's log tail in the error so the API reports them.
-async function runBuildContainer(appName: string, config: DockerAppConfig): Promise<void> {
+async function runBuildContainer(appName: string, workDir: string, config: DockerAppConfig): Promise<void> {
   const buildCmd = config.build_command;
   if (!buildCmd) return;
   const buildName = `ld-build-${appName}`;
@@ -80,7 +80,7 @@ async function runBuildContainer(appName: string, config: DockerAppConfig): Prom
     Image: config.image,
     Env: envVars,
     Cmd: ['sh', '-c', buildCmd],
-    WorkingDir: `/app/apps/${appName}`,
+    WorkingDir: workDir,
     HostConfig: {
       Mounts: [{
         Type: 'volume',

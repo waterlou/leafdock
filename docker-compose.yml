@@ -19,6 +19,9 @@ services:
 
 volumes:
   app_data:
+    # Pinned so the physical volume is leafdock_app_data regardless of the
+    # compose project directory name — app containers mount it via APP_VOLUME.
+    name: leafdock_app_data
 
 networks:
   default:

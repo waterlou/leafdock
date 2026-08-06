@@ -99,6 +99,12 @@ function prefixFromName(name: string): string {
   return `/${name}`;
 }
 
+// Container-side working directory: the app dir relative to the volume root
+// (/app), mirroring the disk layout /data/apps[/<folder>]/<name>.
+function containerWorkDir(name: string, folder: string): string {
+  return `/app/apps${folder ? `/${folder}` : ''}/${name}`;
+}
+
 // Index must be a bare filename: no leading '/', no path separators, no '..' traversal.
 // Only static apps serve an index file, so skip other types — a legacy docker/compose
 // row may carry an irrelevant top-level 'index' field that must not block updates.
@@ -516,7 +522,7 @@ export async function createApp(input: AppInput): Promise<AppOutput> {
     if (input.type === 'docker') {
       const dockerConfig = config as DockerAppConfig;
       await docker.pullImage(dockerConfig.image);
-      containerId = await docker.createContainer(input.name, appDir(input.name, folder), dockerConfig);
+      containerId = await docker.createContainer(input.name, containerWorkDir(input.name, folder), dockerConfig);
       await caddy.addDockerRoute(prefix, containerId, dockerConfig.port, stripPrefix(config));
     } else if (input.type === 'docker-compose') {
       const composeConfig = config as DockerComposeAppConfig;
@@ -592,7 +598,7 @@ export async function createAppFromZip(
     if (type === 'docker') {
       const dockerConfig = config as DockerAppConfig;
       await docker.pullImage(dockerConfig.image);
-      containerId = await docker.createContainer(name, dir, dockerConfig);
+      containerId = await docker.createContainer(name, containerWorkDir(name, folderNorm), dockerConfig);
       await caddy.addDockerRoute(prefix, containerId, dockerConfig.port, stripPrefix(config));
     } else if (type === 'docker-compose') {
       const composeConfig = config as DockerComposeAppConfig;
@@ -663,7 +669,7 @@ export async function updateAppFromZip(
     const containerName = docker.containerNameForApp(existing.name);
     await docker.stopContainer(name);
     await docker.pullImage(dockerConfig.image);
-    const containerId = await docker.createContainer(name, dir, dockerConfig);
+    const containerId = await docker.createContainer(name, containerWorkDir(name, folderFromPrefix(prefix)), dockerConfig);
     await caddy.addDockerRoute(prefix, containerId, dockerConfig.port, stripPrefix(merged));
     updates.container_id = containerId;
   } else if (existing.type === 'docker-compose') {
@@ -757,7 +763,7 @@ async function applyMove(
     if (existing.type === 'docker') {
       // createContainer removes the old container (stale mount) and recreates
       // with the new dir; container_id is name-based so it stays unchanged
-      await docker.createContainer(existing.name, newDir, merged as DockerAppConfig);
+      await docker.createContainer(existing.name, containerWorkDir(existing.name, newFolder), merged as DockerAppConfig);
     } else if (existing.type === 'docker-compose') {
       await compose.composeUp(existing.name, newFolder, (merged as DockerComposeAppConfig).services);
     }
@@ -1066,13 +1072,13 @@ export async function startApp(name: string): Promise<AppOutput> {
         await caddy.addDockerRoute(existing.prefix, docker.containerNameForApp(name), dockerConfig.port, stripPrefix(config));
       } else {
         await docker.pullImage(dockerConfig.image);
-        const containerId = await docker.createContainer(name, appDir(name), dockerConfig);
+        const containerId = await docker.createContainer(name, containerWorkDir(name, folderFromPrefix(existing.prefix)), dockerConfig);
         await caddy.addDockerRoute(existing.prefix, containerId, dockerConfig.port, stripPrefix(config));
         updates.container_id = containerId;
       }
     } else {
       await docker.pullImage(dockerConfig.image);
-      const containerId = await docker.createContainer(name, appDir(name), dockerConfig);
+      const containerId = await docker.createContainer(name, containerWorkDir(name, folderFromPrefix(existing.prefix)), dockerConfig);
       await caddy.addDockerRoute(existing.prefix, containerId, dockerConfig.port, stripPrefix(config));
       updates.container_id = containerId;
     }
