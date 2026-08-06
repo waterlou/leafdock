@@ -98,6 +98,7 @@ Register a new app. The request includes the app name, type, all source files, a
 | `command` | string | — | Override container command |
 | `cpu_limit` | string | `"0.5"` | CPU shares |
 | `mem_limit` | string | `"128m"` | Memory limit |
+| `strip_prefix` | boolean | `true` | `false` = pass the URL prefix through to the container untouched. For apps with a native base path (e.g. Next.js built with `BASE_PATH=/my-app`): the app receives `/my-app/...` requests intact and serves them itself, exactly like a direct deployment. Default `true` strips the prefix and serves the app at its root. Static apps always strip. |
 
 **Docker Compose config:**
 
@@ -105,6 +106,7 @@ Register a new app. The request includes the app name, type, all source files, a
 |-------|------|---------|-------------|
 | `compose_file` | string | `"docker-compose.yml"` | Compose file name |
 | `services` | object | `{}` | Map of service name to `{ port }` for Caddy routing |
+| `strip_prefix` | boolean | `true` | Same as docker type: `false` passes the prefix through untouched for native base-path apps |
 
 Only services that need HTTP routing should be listed in `services`. The first service gets the main prefix (`/<name>/`), additional services get sub-prefixes (`/<name>/<serviceName>/`). Internal services (databases, caches) stay on the compose internal network and should be omitted.
 

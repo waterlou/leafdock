@@ -27,6 +27,8 @@ A container built from source files. Files are mounted at `/app`, the container 
 
 Config: `{ image: "node:20-alpine", port: 3000, env: {}, command: "npm install && node server.js", cpu_limit: "0.5", mem_limit: "128m" }`
 
+**Apps with a native base path** (e.g. Next.js built with `BASE_PATH=/my-app`, deployed the same way as a direct hosting setup): set `strip_prefix: false` in the config and build the app with its `BASE_PATH` set. The prefix then passes through to the container untouched — the app serves `/my-app/...` itself, exactly like `https://app.example.com/my-app`. Without `strip_prefix: false` the prefix is stripped, so the app must serve at its root (no base path).
+
 ### docker-compose
 Multiple containers defined in a `docker-compose.yml`. Files are extracted to the app directory, and `docker compose up -d` starts all services. Caddy routes to individual services — the first service in `config.services` gets the main prefix (`/<name>/`), additional services get sub-prefixes (`/<name>/<serviceName>/`).
 

@@ -101,35 +101,48 @@ export async function addStaticRoute(prefix: string, appDir: string, spa: boolea
   await setRoutes(filtered);
 }
 
-export async function addDockerRoute(prefix: string, containerName: string, port: number): Promise<void> {
+export async function addDockerRoute(prefix: string, containerName: string, port: number, stripPrefix = true): Promise<void> {
   const routes = await getRoutes();
   const routeId = routeIdFor(prefix);
   const rootId = routeIdForRoot(prefix);
 
   const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== rootId);
 
-  // Redirect exact prefix to prefix/ so relative URLs in HTML resolve correctly
-  const redirectRoute: CaddyRoute = {
-    '@id': rootId,
-    match: [{ path: [prefix] }],
+  if (stripPrefix) {
+    // Redirect exact prefix to prefix/ so relative URLs in HTML resolve correctly
+    const redirectRoute: CaddyRoute = {
+      '@id': rootId,
+      match: [{ path: [prefix] }],
+      handle: [{
+        handler: 'static_response',
+        status_code: 308,
+        headers: { Location: [prefix + '/'] },
+      }],
+    };
+    filtered.unshift(redirectRoute);
+  }
+
+  // Strip mode: subroute strips the prefix before forwarding to the container
+  // (the app serves at its own root). Pass-through mode: forward the prefix
+  // path untouched — for apps built with a native base path (e.g. Next.js
+  // BASE_PATH), which expect to receive /travel-expense/... requests intact.
+  // No exact-prefix redirect in pass-through mode: the app's own base-path
+  // redirect would fight it (infinite loop).
+  const serveRoute: CaddyRoute = {
+    '@id': routeId,
+    match: [{ path: stripPrefix ? [`${prefix}/*`] : [prefix, `${prefix}/*`] }],
     handle: [{
-      handler: 'static_response',
-      status_code: 308,
-      headers: { Location: [prefix + '/'] },
+      handler: 'subroute',
+      routes: stripPrefix
+        ? [
+            { handle: [{ handler: 'rewrite', strip_path_prefix: prefix }] },
+            { handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `${containerName}:${port}` }] }] },
+          ]
+        : [{ handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `${containerName}:${port}` }] }] }],
     }],
   };
 
-  // Subroute strips the prefix before forwarding to the container
-  const serveRoute: CaddyRoute = {
-    '@id': routeId,
-    match: [{ path: [`${prefix}/*`] }],
-    handle: [{ handler: 'subroute', routes: [
-      { handle: [{ handler: 'rewrite', strip_path_prefix: prefix }] },
-      { handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `${containerName}:${port}` }] }] },
-    ]}],
-  };
-
-  filtered.unshift(serveRoute, redirectRoute);
+  filtered.unshift(serveRoute);
   await setRoutes(filtered);
 }
 

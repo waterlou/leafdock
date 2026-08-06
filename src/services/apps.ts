@@ -33,12 +33,14 @@ export interface DockerComposeAppConfig {
 
 // Optional on every type: relative directories inside the app dir that must
 // survive file replacement (SQLite DBs, uploads, ...). Moved aside during
-// update, restored after extraction.
-export interface PreserveDirsConfig {
+// update, restored after extraction. strip_prefix only applies to
+// docker/docker-compose routes (validated at merge time).
+export interface SharedAppConfig {
   preserve_dirs?: string[];
+  strip_prefix?: boolean;
 }
 
-export type AppConfig = (StaticAppConfig | DockerAppConfig | DockerComposeAppConfig) & PreserveDirsConfig;
+export type AppConfig = (StaticAppConfig | DockerAppConfig | DockerComposeAppConfig) & SharedAppConfig;
 
 export interface AppInput {
   name: string;
@@ -110,9 +112,23 @@ function mergeConfig(
   patch?: AppConfig
 ): AppConfig {
   if (patch?.preserve_dirs !== undefined) validatePreserveDirs(patch.preserve_dirs);
+  if (patch?.strip_prefix !== undefined) {
+    if (typeof patch.strip_prefix !== 'boolean') {
+      throw new ValidationError('"strip_prefix" must be a boolean.');
+    }
+    if (type === 'static' && !patch.strip_prefix) {
+      throw new ValidationError('"strip_prefix": false only applies to docker and docker-compose apps.');
+    }
+  }
   const merged = { ...getDefaultConfig(type), ...(stored ? JSON.parse(stored) : {}), ...patch };
   validateStaticConfig(merged, type);
   return merged;
+}
+
+// Default routing mode is prefix-stripping; pass-through only when the app
+// opts in via strip_prefix: false (native base-path apps).
+function stripPrefix(config: AppConfig): boolean {
+  return config.strip_prefix !== false;
 }
 
 // Relative dir paths only: no absolute paths, no traversal, no backslashes.
@@ -475,11 +491,11 @@ export async function createApp(input: AppInput): Promise<AppOutput> {
       const dockerConfig = config as DockerAppConfig;
       await docker.pullImage(dockerConfig.image);
       containerId = await docker.createContainer(input.name, appDir(input.name, folder), dockerConfig);
-      await caddy.addDockerRoute(prefix, containerId, dockerConfig.port);
+      await caddy.addDockerRoute(prefix, containerId, dockerConfig.port, stripPrefix(config));
     } else if (input.type === 'docker-compose') {
       const composeConfig = config as DockerComposeAppConfig;
       await compose.composeUp(input.name, folder, composeConfig.services);
-      await addComposeRoutes(prefix, input.name, composeConfig.services);
+      await addComposeRoutes(prefix, input.name, composeConfig.services, stripPrefix(config));
       containerId = JSON.stringify(
         Object.keys(composeConfig.services).reduce((acc, s) => {
           acc[s] = composeContainerName(input.name, s);
@@ -551,11 +567,11 @@ export async function createAppFromZip(
       const dockerConfig = config as DockerAppConfig;
       await docker.pullImage(dockerConfig.image);
       containerId = await docker.createContainer(name, dir, dockerConfig);
-      await caddy.addDockerRoute(prefix, containerId, dockerConfig.port);
+      await caddy.addDockerRoute(prefix, containerId, dockerConfig.port, stripPrefix(config));
     } else if (type === 'docker-compose') {
       const composeConfig = config as DockerComposeAppConfig;
       await compose.composeUp(name, folderNorm, composeConfig.services);
-      await addComposeRoutes(prefix, name, composeConfig.services);
+      await addComposeRoutes(prefix, name, composeConfig.services, stripPrefix(config));
       containerId = JSON.stringify(
         Object.keys(composeConfig.services).reduce((acc, s) => {
           acc[s] = composeContainerName(name, s);
@@ -622,7 +638,7 @@ export async function updateAppFromZip(
     await docker.stopContainer(name);
     await docker.pullImage(dockerConfig.image);
     const containerId = await docker.createContainer(name, dir, dockerConfig);
-    await caddy.addDockerRoute(prefix, containerId, dockerConfig.port);
+    await caddy.addDockerRoute(prefix, containerId, dockerConfig.port, stripPrefix(merged));
     updates.container_id = containerId;
   } else if (existing.type === 'docker-compose') {
     const existingConfig = JSON.parse(existing.config) as DockerComposeAppConfig;
@@ -635,7 +651,7 @@ export async function updateAppFromZip(
     await compose.composeDown(name, folderFromPrefix(prefix));
     const composeConfig = merged as DockerComposeAppConfig;
     await compose.composeUp(name, folderFromPrefix(prefix), composeConfig.services);
-    await addComposeRoutes(prefix, name, composeConfig.services);
+    await addComposeRoutes(prefix, name, composeConfig.services, stripPrefix(merged));
     updates.container_id = JSON.stringify(
       Object.keys(composeConfig.services).reduce((acc, s) => {
         acc[s] = composeContainerName(name, s);
@@ -699,10 +715,10 @@ async function applyMove(
   if (existing.type === 'docker-compose') {
     const oldServices = (JSON.parse(existing.config) as DockerComposeAppConfig).services;
     await removeComposeRoutes(existing.prefix, oldServices);
-    await addComposeRoutes(newPrefix, existing.name, (merged as DockerComposeAppConfig).services);
+    await addComposeRoutes(newPrefix, existing.name, (merged as DockerComposeAppConfig).services, stripPrefix(merged));
   } else if (existing.type === 'docker') {
     await caddy.removeRoute(existing.prefix);
-    await caddy.addDockerRoute(newPrefix, docker.containerNameForApp(existing.name), (merged as DockerAppConfig).port);
+    await caddy.addDockerRoute(newPrefix, docker.containerNameForApp(existing.name), (merged as DockerAppConfig).port, stripPrefix(merged));
   } else {
     await caddy.removeRoute(existing.prefix);
     const staticConfig = merged as StaticAppConfig;
@@ -791,7 +807,7 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
       updates.container_id = containerId;
 
       await caddy.removeRoute(currentPrefix);
-      await caddy.addDockerRoute(currentPrefix, containerId, dockerConfig.port);
+      await caddy.addDockerRoute(currentPrefix, containerId, dockerConfig.port, stripPrefix(merged!));
     }
   }
 
@@ -810,7 +826,7 @@ export async function updateApp(name: string, input: Partial<AppInput>): Promise
     await removeComposeRoutes(currentPrefix, oldConfig.services);
     await compose.composeDown(name, folderFromPrefix(currentPrefix));
     await compose.composeUp(name, folderFromPrefix(currentPrefix), composeConfig.services);
-    await addComposeRoutes(currentPrefix, name, composeConfig.services);
+    await addComposeRoutes(currentPrefix, name, composeConfig.services, stripPrefix(merged!));
     updates.container_id = JSON.stringify(
       Object.keys(composeConfig.services).reduce((acc, s) => {
         acc[s] = composeContainerName(name, s);
@@ -1012,12 +1028,12 @@ export async function startApp(name: string): Promise<AppOutput> {
     const dockerConfig = config as DockerAppConfig;
     await docker.pullImage(dockerConfig.image);
     const containerId = await docker.createContainer(name, appDir(name), dockerConfig);
-    await caddy.addDockerRoute(existing.prefix, containerId, dockerConfig.port);
+    await caddy.addDockerRoute(existing.prefix, containerId, dockerConfig.port, stripPrefix(config));
     updates.container_id = containerId;
   } else if (existing.type === 'docker-compose') {
     const composeConfig = config as DockerComposeAppConfig;
     await compose.composeUp(name, folderFromPrefix(existing.prefix), composeConfig.services);
-    await addComposeRoutes(existing.prefix, name, composeConfig.services);
+    await addComposeRoutes(existing.prefix, name, composeConfig.services, stripPrefix(config));
     updates.container_id = JSON.stringify(
       Object.keys(composeConfig.services).reduce((acc, s) => {
         acc[s] = composeContainerName(name, s);
@@ -1060,10 +1076,10 @@ export async function syncRoutes(): Promise<void> {
       if (row.type === 'docker') {
         const dockerConfig = config as DockerAppConfig;
         const containerName = docker.containerNameForApp(row.name);
-        await caddy.addDockerRoute(row.prefix, containerName, dockerConfig.port);
+        await caddy.addDockerRoute(row.prefix, containerName, dockerConfig.port, stripPrefix(config));
       } else if (row.type === 'docker-compose') {
         const composeConfig = config as DockerComposeAppConfig;
-        await addComposeRoutes(row.prefix, row.name, composeConfig.services);
+        await addComposeRoutes(row.prefix, row.name, composeConfig.services, stripPrefix(config));
       } else {
         const staticConfig = config as StaticAppConfig;
         await caddy.addStaticRoute(row.prefix, appDir(row.name), staticConfig.spa, staticConfig.index);
@@ -1081,13 +1097,13 @@ function composeContainerName(appName: string, serviceName: string): string {
   return `${COMPOSE_PROJECT_PREFIX}${appName}-${serviceName}`;
 }
 
-async function addComposeRoutes(prefix: string, name: string, services: Record<string, { port: number }>): Promise<void> {
+async function addComposeRoutes(prefix: string, name: string, services: Record<string, { port: number }>, stripPrefix = true): Promise<void> {
   const entries = Object.entries(services);
   for (let i = 0; i < entries.length; i++) {
     const [serviceName, config] = entries[i];
     const containerName = composeContainerName(name, serviceName);
     const servicePrefix = i === 0 ? prefix : `${prefix}/${serviceName}`;
-    await caddy.addDockerRoute(servicePrefix, containerName, config.port);
+    await caddy.addDockerRoute(servicePrefix, containerName, config.port, stripPrefix);
   }
 }
 
