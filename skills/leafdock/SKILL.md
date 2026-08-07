@@ -5,7 +5,7 @@ description: Deploy and manage web apps on an internal Docker host via REST API.
 
 You have access to **Leafdock** — a Docker-based system that runs on the user's NAS and serves web apps under URL prefixes (e.g., `https://nas.ts.net/my-app`). You can deploy, update, list, and remove apps through its management API.
 
-Apps can live in **subfolders**: an app in folder `blog` is served at `https://nas.ts.net/blog/my-app` and stored on disk at `/data/apps/blog/<name>`. The landing page shows only the current folder's apps and its immediate subfolders — click a folder to drill into it, and use the Back / Root buttons to navigate out (Root appears when more than one level deep). Folders can nest (`blog/tutorials`), and each folder segment is lowercase letters, digits, and hyphens, starting with a letter. Input case is normalized: `Demo` is accepted and stored as `demo`, so the URL, disk layout, and landing page always show the lowercase form. Each folder can also have a **display label** (e.g. `new-demo` → "New Demo") via `PUT /folders/new-demo` — the landing page shows the label instead of the slug, while the URL and disk path always use the slug. Folders are deep-linkable: visiting `https://nas.ts.net/new-demo` opens that folder's view directly (browser Back/Forward navigate folders too).
+Apps can live in **subfolders**: an app in folder `blog` is served at `https://nas.ts.net/blog/my-app` and stored on disk at `/data/apps/blog/<name>`. The landing page shows only the current folder's apps and its immediate subfolders — click a folder to drill into it. Inside a folder, the folder's display label becomes the page title, with the Back / Root buttons at the header's edges (Root appears when more than one level deep). Folders can nest (`blog/tutorials`), and each folder segment is lowercase letters, digits, and hyphens, starting with a letter. Input case is normalized: `Demo` is accepted and stored as `demo`, so the URL, disk layout, and landing page always show the lowercase form. Each folder can also have a **display label** (e.g. `new-demo` → "New Demo") via `PUT /folders/new-demo` — the landing page shows the label instead of the slug, while the URL and disk path always use the slug. Folders are deep-linkable: visiting `https://nas.ts.net/new-demo` opens that folder's view directly (browser Back/Forward navigate folders too).
 
 ## Configuration
 
@@ -168,7 +168,7 @@ PUT /folders/:path
 Body: { label: "New Demo" }   // "" clears it, falling back to the slug
 → { path, label }
 ```
-Label is metadata only: the URL and disk directory keep the slug (`new-demo`); the landing page renders the label in the folder row. Up to 100 chars, any printable text (it is HTML-escaped on the landing page).
+Label is metadata only: the URL and disk directory keep the slug (`new-demo`); the landing page renders the label in the folder row and as the page title when the folder is open. Up to 100 chars, any printable text (it is HTML-escaped on the landing page).
 
 ### Delete App
 ```

@@ -425,7 +425,7 @@ curl -X POST https://nas.ts.net/api/v1/apps/blog-todo/move \
 PUT /folders/:path
 ```
 
-Set or clear the display label of a folder. The label is metadata only: the URL and the on-disk directory keep using the slug path (e.g. folder `new-demo` → URL `/new-demo/<name>` → disk `<data>/apps/new-demo/<name>`), and the landing page renders the label instead of the slug. Folders exist implicitly via app prefixes; the label persists even if no app currently lives in the folder.
+Set or clear the display label of a folder. The label is metadata only: the URL and the on-disk directory keep using the slug path (e.g. folder `new-demo` → URL `/new-demo/<name>` → disk `<data>/apps/new-demo/<name>`), and the landing page renders the label instead of the slug — in the folder row, and as the page title when the folder is open. Folders exist implicitly via app prefixes; the label persists even if no app currently lives in the folder.
 
 **Request body:**
 ```json

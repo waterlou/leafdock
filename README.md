@@ -156,7 +156,7 @@ Private repositories are authenticated from the leafdock environment (`GIT_TOKEN
 
 ## Subfolders
 
-Apps can live in subfolders: an app in folder `blog` is served at `http://<nas-hostname>/blog/my-app` and stored on disk at `/data/apps/blog/my-app/`. Folders can nest (`blog/tutorials`). The landing page shows only the current folder's apps plus its immediate subfolders; click a folder to drill into it, and use the Back / Root buttons to navigate out (the Root button appears when you're more than one level deep).
+Apps can live in subfolders: an app in folder `blog` is served at `http://<nas-hostname>/blog/my-app` and stored on disk at `/data/apps/blog/my-app/`. Folders can nest (`blog/tutorials`). The landing page shows only the current folder's apps plus its immediate subfolders; click a folder to drill into it. Inside a folder, the folder's display label becomes the page title and the Back / Root buttons sit at the header's edges — the Root button appears when you're more than one level deep.
 
 - **Create in a folder** — add `"folder": "blog"` to the create payload (`""` or omitted = root; mutually exclusive with `prefix`, which sets the full URL instead)
 - **Move** — `POST /api/v1/apps/:name/move` with body `{"folder": "blog"}` (`{"folder": ""}` moves back to root)
