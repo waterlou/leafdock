@@ -45,6 +45,7 @@ https://raw.githubusercontent.com/waterlou/leafdock/refs/heads/main/skills/leafd
   body, .card, .page-title, .app-type, .theme-toggle, .toolbar, .sort-group button, .edit-btn, .apps li, .app-actions button, .error-detail { transition: background 0.3s, color 0.3s, border-color 0.3s; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--fg); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; }
   .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 40px; max-width: 600px; width: 100%; text-align: center; }
+  .page-title-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
   .page-title { color: var(--link); font-size: 24px; margin-bottom: 20px; text-align: center; transition: color 0.3s; }
   .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; }
   .sort-group { display: flex; border: 1px solid var(--select-border); border-radius: 6px; overflow: hidden; }
@@ -59,10 +60,8 @@ https://raw.githubusercontent.com/waterlou/leafdock/refs/heads/main/skills/leafd
   .apps { list-style: none; text-align: left; }
   .apps li { padding: 12px 16px; border: 1px solid var(--card-border); border-radius: 8px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
   .apps li:hover { background: var(--hover); }
-  .nav-row { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
   .nav-btn { background: var(--select-bg); border: 1px solid var(--select-border); color: var(--fg); padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
   .nav-btn:hover { border-color: var(--link); }
-  .nav-path { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .folder-row { color: var(--muted); font-weight: 600; font-size: 16px; cursor: pointer; }
   .folder-row::before { content: '▸'; color: var(--muted); font-size: 11px; }
   .folder-row:hover { color: var(--link); }
@@ -102,7 +101,11 @@ https://raw.githubusercontent.com/waterlou/leafdock/refs/heads/main/skills/leafd
 </style>
 </head>
 <body>
-<h1 class="page-title">${title}</h1>
+<div class="page-title-row">
+  <button class="nav-btn" id="back-btn" style="display:none">&#8592; Back</button>
+  <button class="nav-btn" id="root-btn" style="display:none">Root</button>
+  <h1 class="page-title" id="page-title">${title}</h1>
+</div>
 <div class="card">
   <div class="toolbar">
     <div class="sort-group" id="sort-group">
@@ -110,11 +113,6 @@ https://raw.githubusercontent.com/waterlou/leafdock/refs/heads/main/skills/leafd
       <button data-sort="name"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></button>
     </div>
     <button class="edit-btn" id="edit-btn">Edit</button>
-  </div>
-  <div class="nav-row" id="nav-row" style="display:none">
-    <button class="nav-btn" id="back-btn">&#8592; Back</button>
-    <button class="nav-btn" id="root-btn">Root</button>
-    <span class="nav-path" id="nav-path"></span>
   </div>
   <p>Your apps are listed below.</p>
   <div id="app-list" class="loading">Loading apps...</div>
@@ -244,15 +242,18 @@ function folderPathLabel(folder) {
 }
 
 function updateNav() {
-  var nav = document.getElementById('nav-row');
-  if (!nav) return;
+  var back = document.getElementById('back-btn');
+  var root = document.getElementById('root-btn');
+  var titleEl = document.getElementById('page-title');
   if (currentFolder === '') {
-    nav.style.display = 'none';
+    back.style.display = 'none';
+    root.style.display = 'none';
+    titleEl.textContent = '${title}';
     return;
   }
-  nav.style.display = 'flex';
-  document.getElementById('root-btn').style.display = currentFolder.indexOf('/') !== -1 ? 'inline-block' : 'none';
-  document.getElementById('nav-path').textContent = folderPathLabel(currentFolder);
+  back.style.display = 'inline-block';
+  root.style.display = currentFolder.indexOf('/') !== -1 ? 'inline-block' : 'none';
+  titleEl.textContent = folderPathLabel(currentFolder);
 }
 
 function getKey() { return localStorage.getItem('apiKey') || ''; }
