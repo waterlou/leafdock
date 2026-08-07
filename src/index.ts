@@ -45,8 +45,9 @@ https://raw.githubusercontent.com/waterlou/leafdock/refs/heads/main/skills/leafd
   body, .card, .page-title, .app-type, .theme-toggle, .toolbar, .sort-group button, .edit-btn, .apps li, .app-actions button, .error-detail { transition: background 0.3s, color 0.3s, border-color 0.3s; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--fg); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; }
   .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 40px; max-width: 600px; width: 100%; text-align: center; }
-  .page-title-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
-  .page-title { color: var(--link); font-size: 24px; margin-bottom: 20px; text-align: center; transition: color 0.3s; }
+  .page-title-row { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; max-width: 600px; }
+  .page-title-row.has-nav { justify-content: flex-start; }
+  .page-title { color: var(--link); font-size: 24px; margin-bottom: 20px; text-align: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color 0.3s; }
   .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; }
   .sort-group { display: flex; border: 1px solid var(--select-border); border-radius: 6px; overflow: hidden; }
   .sort-group button { background: var(--select-bg); border: none; color: var(--muted); padding: 4px 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
@@ -101,7 +102,7 @@ https://raw.githubusercontent.com/waterlou/leafdock/refs/heads/main/skills/leafd
 </style>
 </head>
 <body>
-<div class="page-title-row">
+<div class="page-title-row" id="page-title-row">
   <button class="nav-btn" id="back-btn" style="display:none">&#8592; Back</button>
   <button class="nav-btn" id="root-btn" style="display:none">Root</button>
   <h1 class="page-title" id="page-title">${title}</h1>
@@ -242,6 +243,7 @@ function folderPathLabel(folder) {
 }
 
 function updateNav() {
+  var row = document.getElementById('page-title-row');
   var back = document.getElementById('back-btn');
   var root = document.getElementById('root-btn');
   var titleEl = document.getElementById('page-title');
@@ -249,8 +251,10 @@ function updateNav() {
     back.style.display = 'none';
     root.style.display = 'none';
     titleEl.textContent = '${title}';
+    row.classList.remove('has-nav');
     return;
   }
+  row.classList.add('has-nav');
   back.style.display = 'inline-block';
   root.style.display = currentFolder.indexOf('/') !== -1 ? 'inline-block' : 'none';
   titleEl.textContent = folderPathLabel(currentFolder);
