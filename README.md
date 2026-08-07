@@ -136,6 +136,24 @@ curl -X POST http://localhost/api/v1/apps \
 
 Then visit `http://<nas-hostname>/hello`.
 
+Prefer deploying from a git repo when the app lives in one — no file transfer, and updates re-pull the latest commit:
+
+```bash
+# Create from a repository (public GitHub, Gitea, or file:// for local)
+curl -X POST http://localhost/api/v1/apps/git \
+  -H "Authorization: Bearer <your-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"my-app","type":"static","git":{"url":"https://github.com/you/my-app.git"}}'
+
+# Update — re-clones the repo (docker apps rebuild automatically)
+curl -X PUT http://localhost/api/v1/apps/my-app/git \
+  -H "Authorization: Bearer <your-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"git":{"url":"https://github.com/you/my-app.git"}}'
+```
+
+Private repositories are authenticated from the leafdock environment (`GIT_TOKENS` or `GIT_TOKEN`) — the API never accepts or stores tokens. See `api-docs.md` for the full contract.
+
 ## Subfolders
 
 Apps can live in subfolders: an app in folder `blog` is served at `http://<nas-hostname>/blog/my-app` and stored on disk at `/data/apps/blog/my-app/`. Folders can nest (`blog/tutorials`). The landing page shows only the current folder's apps plus its immediate subfolders; click a folder to drill into it, and use the Back / Root buttons to navigate out (the Root button appears when you're more than one level deep).

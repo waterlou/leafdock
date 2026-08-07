@@ -4,7 +4,7 @@ FROM node:20-alpine
 # Note: arm/v7 is not covered (amd64 fallback) — requires buildx.
 ARG TARGETARCH=amd64
 
-RUN apk add --no-cache docker-cli docker-cli-compose curl && \
+RUN apk add --no-cache git docker-cli docker-cli-compose curl && \
     if [ "$TARGETARCH" = "arm64" ]; then \
         CADDY_ARCH=arm64; \
     else \

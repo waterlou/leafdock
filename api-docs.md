@@ -221,6 +221,84 @@ curl -X PUT https://nas.ts.net/api/v1/apps/photo-gallery/upload \
 
 ---
 
+### Create App (Git)
+
+```
+POST /apps/git
+```
+
+Create a new app by cloning a git repository. The repository (or a `subdir` inside it) becomes the app's file structure — same end state as the zip upload, but the source stays a repo you can re-pull on update. Works for all app types (`static`, `docker`, `docker-compose`).
+
+**Request:** `application/json`
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | App name (lowercase letters, numbers, hyphens) |
+| `type` | yes | `static`, `docker`, or `docker-compose` |
+| `git` | yes | Git source object (see below) |
+| `config` | no | App config object, same fields as JSON/zip create |
+| `folder` | no | Subfolder (same semantics as zip create) |
+| `icon` | no | Emoji shown next to the app name on the landing page |
+
+The `git` object:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `url` | yes | Repository URL — `https://`, `http://` (LAN Gitea), or `file://` (local) |
+| `branch` | no | Branch to clone; defaults to the repo's default branch |
+| `subdir` | no | Monorepo subpath to use as the app root (e.g. `"apps/web"`) |
+
+**There is no token field.** Private GitHub/Gitea repositories are authenticated from the leafdock environment, not from the request: set `GIT_TOKENS` (JSON `{"<host>": "<token>"}`, e.g. `{"github.com":"ghp_..."}`) or `GIT_TOKEN` in the container environment. Host-keyed `GIT_TOKENS` wins over the single `GIT_TOKEN`. The API never accepts or stores tokens, and they never appear in `config.git`, responses, or the database.
+
+**Response 201:** Full app object; `config.git` records `{ url, branch?, subdir? }`.
+
+**Errors:**
+- `409` — App name already exists
+- `400` — Missing/invalid `git`, invalid name/folder, or clone failure (auth, network, bad URL — the git error tail is included in the message)
+
+**cURL example:**
+```bash
+curl -X POST https://<your-host>/api/v1/apps/git \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"photo-gallery","type":"static","git":{"url":"https://github.com/you/photo-gallery.git","subdir":"apps/web"}}'
+```
+
+---
+
+### Update App (Git)
+
+```
+PUT /apps/:name/git
+```
+
+Re-clone an existing app's repository (deterministic — never `git pull`). Optionally update the config at the same time.
+
+**Request:** `application/json`
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `git` | yes | Git source object (same shape as create; no token field) |
+| `config` | no | Optional updated configuration; may include `icon` to change the emoji shown next to the app name on the landing page |
+
+The update replaces the app directory, **except** directories listed in `config.preserve_dirs` (e.g. `"preserve_dirs": ["prisma/data", "public/uploads"]`) — they are moved aside and restored, so databases and uploads survive redeploys. Docker apps rebuild automatically (the build/run command split is unchanged); docker-compose apps are recreated from the new files.
+
+**Response 200:** Updated app object.
+
+**Errors:**
+- `404` — App not found
+- `400` — Missing/invalid `git`, or clone failure (auth, network, bad URL — the git error tail is included in the message)
+
+**cURL example:**
+```bash
+curl -X PUT https://<your-host>/api/v1/apps/photo-gallery/git \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"git":{"url":"https://github.com/you/photo-gallery.git"}}'
+```
+
+---
+
 ### Get App
 
 ```

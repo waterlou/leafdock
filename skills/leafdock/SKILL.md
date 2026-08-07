@@ -197,6 +197,29 @@ GET /health
 ```
 No auth required.
 
+## Workflow: Deploy from Git
+
+Prefer this when the app lives in a git repository (public GitHub, private GitHub, or a Gitea instance) — no zip/JSON file transfer needed, and updates re-pull the latest commit.
+
+```
+POST /apps/git
+Body: { name, type, git: { url, branch?, subdir? }, config?, folder?, icon? }
+→ 201 + full app object
+```
+
+- `git.url` — `https://`/`http://` (Gitea) or `file://` (local); `git.branch` — defaults to the repo default branch; `git.subdir` — monorepo subpath used as the app root.
+- **No token field in the request.** Public repos need nothing. Private GitHub/Gitea repos require `GIT_TOKENS` (JSON `{"<host>": "<token>"}`) or `GIT_TOKEN` set in the leafdock container environment — if the clone 400s with an auth error, tell the user their instance env is missing the token. The API never accepts or stores tokens.
+- Update = `PUT /apps/:name/git` with `{ git: {...} }` — re-clones the repo (never `git pull`), so the app always matches the latest commit. Docker apps rebuild automatically on git updates (build-split rebuild); compose apps are recreated.
+- `config.preserve_dirs` still applies to stateful apps (SQLite DBs, uploads) — same as zip updates.
+
+cURL example:
+```bash
+curl -X POST $INTRANET_HOST_URL/api/v1/apps/git \
+  -H "Authorization: Bearer $INTRANET_HOST_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"photo-gallery","type":"static","git":{"url":"https://github.com/you/photo-gallery.git"}}'
+```
+
 ## Workflow: Deploy a Static App (recommended)
 
 Use zip upload for all apps with asset files (images, fonts, CSS, JS). This avoids base64 encoding issues.
@@ -375,6 +398,7 @@ Send valid JSON (double quotes, quoted keys). The API tolerates common mistakes 
 - **Use SPA mode for React/Vue/Svelte apps.** Set `config.spa: true` so client-side routing works.
 - **Docker apps take longer to start** (image pull + npm install). Tell the user it may take 30-60 seconds.
 - **ALWAYS use zip upload for apps with images, fonts, or videos.** The JSON endpoint (`POST /apps`) requires base64-encoding binary content, which the AI generates incorrectly — files end up corrupt and invisible in the browser. Use `POST /apps/upload` with `multipart/form-data` instead. See the "Deploy a Static App" workflow above.
+- **Prefer git deploy when the app lives in a repository.** `POST /apps/git` clones the repo (public: just `url`; private: the leafdock env must have `GIT_TOKENS`/`GIT_TOKEN`), and `PUT /apps/:name/git` re-clones on update — no file transfer, and docker apps rebuild automatically. See the "Deploy from Git" workflow.
 - **For text-only apps (no images/fonts/video), JSON upload is fine.** You can use `POST /apps` with `Content-Type: application/json`.
 - **Match the landing page's dark/light theme in your app.** The landing page stores the user's theme preference in `localStorage` under the key `"theme"` (values: `"dark"` or `"light"`). Include a snippet at the top of `<body>` in every generated app so it picks up the user's current theme:
   ```html

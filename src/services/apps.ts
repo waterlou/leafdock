@@ -5,6 +5,7 @@ import * as db from '../db';
 import * as caddy from './caddy';
 import * as docker from './docker';
 import * as compose from './compose';
+import { GitSource, validateGitSource, cloneRepo } from './git';
 
 export interface AppFile {
   path: string;
@@ -39,10 +40,13 @@ export interface DockerComposeAppConfig {
 // Optional on every type: relative directories inside the app dir that must
 // survive file replacement (SQLite DBs, uploads, ...). Moved aside during
 // update, restored after extraction. strip_prefix only applies to
-// docker/docker-compose routes (validated at merge time).
+// docker/docker-compose routes (validated at merge time). git records the
+// deploy source for apps created/updated via the git endpoints — set only by
+// those endpoints, never by JSON/zip create (which reject it in config).
 export interface SharedAppConfig {
   preserve_dirs?: string[];
   strip_prefix?: boolean;
+  git?: GitSource;
 }
 
 export type AppConfig = (StaticAppConfig | DockerAppConfig | DockerComposeAppConfig) & SharedAppConfig;
@@ -658,6 +662,148 @@ export async function updateAppFromZip(
     const zip = new AdmZip(zipPath);
     zip.extractAllTo(dir, true);
     fs.rmSync(zipPath, { force: true });
+  });
+
+  // Refresh Caddy route
+  const prefix = existing.prefix;
+  await caddy.removeRoute(prefix);
+
+  if (existing.type === 'docker') {
+    const dockerConfig = merged as DockerAppConfig;
+    const containerName = docker.containerNameForApp(existing.name);
+    await docker.stopContainer(name);
+    await docker.pullImage(dockerConfig.image);
+    const containerId = await docker.createContainer(name, containerWorkDir(name, folderFromPrefix(prefix)), dockerConfig);
+    await caddy.addDockerRoute(prefix, containerId, dockerConfig.port, stripPrefix(merged));
+    updates.container_id = containerId;
+  } else if (existing.type === 'docker-compose') {
+    const existingConfig = JSON.parse(existing.config) as DockerComposeAppConfig;
+    // Remove sub-service routes (main prefix already removed above)
+    const entries = Object.entries(existingConfig.services);
+    for (let i = 1; i < entries.length; i++) {
+      const [serviceName] = entries[i];
+      try { await caddy.removeRoute(`${prefix}/${serviceName}`); } catch {}
+    }
+    await compose.composeDown(name, folderFromPrefix(prefix));
+    const composeConfig = merged as DockerComposeAppConfig;
+    await compose.composeUp(name, folderFromPrefix(prefix), composeConfig.services);
+    await addComposeRoutes(prefix, name, composeConfig.services, stripPrefix(merged));
+    updates.container_id = JSON.stringify(
+      Object.keys(composeConfig.services).reduce((acc, s) => {
+        acc[s] = composeContainerName(name, s);
+        return acc;
+      }, {} as Record<string, string>)
+    );
+  } else {
+    const staticConfig = merged as StaticAppConfig;
+    await caddy.addStaticRoute(prefix, dir, staticConfig.spa, staticConfig.index);
+  }
+
+  db.updateApp(name, updates);
+  return rowToOutput(db.getApp(name)!);
+}
+
+export async function createAppFromGit(
+  name: string,
+  type: 'static' | 'docker' | 'docker-compose',
+  git: GitSource,
+  appConfig?: AppConfig,
+  folder?: string,
+  icon?: string
+): Promise<AppOutput> {
+  validateName(name);
+
+  const iconNorm = icon !== undefined ? validateIcon(icon) : '';
+  const folderNorm = validateFolder(folder ?? '');
+  const prefix = folderNorm ? `/${folderNorm}/${name}` : `/${name}`;
+
+  if (db.appExists(name)) {
+    throw new ValidationError(`App "${name}" already exists`);
+  }
+
+  throwIfPrefixConflict(prefix);
+
+  const gitNorm = validateGitSource(git);
+  if (appConfig?.git !== undefined) {
+    throw new ValidationError('"git" must be given at the top level, not inside config.');
+  }
+
+  // Clone repository to app directory
+  const dir = appDir(name, folderNorm);
+  cloneRepo(gitNorm, dir);
+
+  const now = new Date().toISOString();
+  const configMerged = mergeConfig(type, undefined, appConfig);
+  configMerged.git = gitNorm;
+
+  let containerId: string | null = null;
+
+  try {
+    if (type === 'docker') {
+      const dockerConfig = configMerged as DockerAppConfig;
+      await docker.pullImage(dockerConfig.image);
+      containerId = await docker.createContainer(name, containerWorkDir(name, folderNorm), dockerConfig);
+      await caddy.addDockerRoute(prefix, containerId, dockerConfig.port, stripPrefix(configMerged));
+    } else if (type === 'docker-compose') {
+      const composeConfig = configMerged as DockerComposeAppConfig;
+      await compose.composeUp(name, folderNorm, composeConfig.services);
+      await addComposeRoutes(prefix, name, composeConfig.services, stripPrefix(configMerged));
+      containerId = JSON.stringify(
+        Object.keys(composeConfig.services).reduce((acc, s) => {
+          acc[s] = composeContainerName(name, s);
+          return acc;
+        }, {} as Record<string, string>)
+      );
+    } else {
+      const staticConfig = configMerged as StaticAppConfig;
+      await caddy.addStaticRoute(prefix, dir, staticConfig.spa, staticConfig.index);
+    }
+  } catch (err) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+
+  const row: db.AppRow = {
+    name,
+    type,
+    prefix,
+    status: 'running',
+    config: JSON.stringify(configMerged),
+    container_id: containerId,
+    icon: iconNorm,
+    created_at: now,
+    updated_at: now,
+  };
+
+  db.createApp(row);
+  return rowToOutput(db.getApp(name)!);
+}
+
+export async function updateAppFromGit(
+  name: string,
+  git: GitSource,
+  appConfig?: AppConfig,
+  icon?: string
+): Promise<AppOutput> {
+  const existing = db.getApp(name);
+  if (!existing) throw new ValidationError(`App "${name}" not found`);
+
+  const gitNorm = validateGitSource(git);
+  if (appConfig?.git !== undefined) {
+    throw new ValidationError('"git" must be given at the top level, not inside config.');
+  }
+
+  const now = new Date().toISOString();
+  const merged = mergeConfig(existing.type, existing.config, appConfig);
+  merged.git = gitNorm;
+  const updates: Parameters<typeof db.updateApp>[1] = { updated_at: now, config: JSON.stringify(merged) };
+  if (icon !== undefined) updates.icon = validateIcon(icon);
+
+  // Re-clone, keeping configured runtime-data dirs (DBs, uploads) alive.
+  // cloneRepo wipes and recreates the app dir itself.
+  const dir = appDir(name);
+  withPreservedDirs(dir, dir, merged.preserve_dirs ?? [], () => {
+    cloneRepo(gitNorm, dir);
   });
 
   // Refresh Caddy route

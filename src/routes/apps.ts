@@ -70,6 +70,35 @@ router.post('/upload', uploadMiddleware, async (req: Request, res: Response) => 
   }
 });
 
+// POST /api/v1/apps/git — git clone create
+router.post('/git', async (req: Request, res: Response) => {
+  try {
+    const { name, type, git, config, folder, icon } = req.body;
+
+    if (!git || typeof git !== 'object' || Array.isArray(git)) {
+      res.status(400).json({ error: { code: 'validation_error', message: '"git" is required' } });
+      return;
+    }
+    if (typeof git.url !== 'string') {
+      res.status(400).json({ error: { code: 'validation_error', message: '"git.url" must be a string.' } });
+      return;
+    }
+    if (folder !== undefined && typeof folder !== 'string') {
+      res.status(400).json({ error: { code: 'validation_error', message: '"folder" must be a string.' } });
+      return;
+    }
+    if (icon !== undefined && typeof icon !== 'string') {
+      res.status(400).json({ error: { code: 'validation_error', message: '"icon" must be a string.' } });
+      return;
+    }
+
+    const app = await apps.createAppFromGit(name, type, git, config, folder, icon);
+    res.status(201).json(app);
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
 // PUT /api/v1/apps/:name/upload — zip update
 router.put('/:name/upload', uploadMiddleware, async (req: Request, res: Response) => {
   try {
@@ -94,6 +123,32 @@ router.put('/:name/upload', uploadMiddleware, async (req: Request, res: Response
     }
 
     const app = await apps.updateAppFromZip(name, files.file[0].path, config, icon);
+    res.json(app);
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// PUT /api/v1/apps/:name/git — git clone update (re-clone)
+router.put('/:name/git', async (req: Request, res: Response) => {
+  try {
+    const name = param(req, 'name');
+    const { git, config, icon } = req.body;
+
+    if (!git || typeof git !== 'object' || Array.isArray(git)) {
+      res.status(400).json({ error: { code: 'validation_error', message: '"git" is required' } });
+      return;
+    }
+    if (typeof git.url !== 'string') {
+      res.status(400).json({ error: { code: 'validation_error', message: '"git.url" must be a string.' } });
+      return;
+    }
+    if (icon !== undefined && typeof icon !== 'string') {
+      res.status(400).json({ error: { code: 'validation_error', message: '"icon" must be a string.' } });
+      return;
+    }
+
+    const app = await apps.updateAppFromGit(name, git, config, icon);
     res.json(app);
   } catch (err) {
     handleError(res, err);
