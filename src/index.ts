@@ -80,8 +80,13 @@ https://raw.githubusercontent.com/waterlou/leafdock/refs/heads/main/skills/leafd
   .status.running { color: var(--green); }
   .status.stopped { color: var(--yellow); }
   .status.error { color: var(--red); }
-  /* Mobile: drop the type tag, collapse status text into a colored dot */
+  /* Mobile: drop the type tag, collapse status text into a colored dot, flatten
+     the card box, and slim the header side padding so folder titles truncate
+     less (52px still clears the compacted nav buttons). */
   @media (max-width: 600px) {
+    .card { border: none; border-radius: 0; background: transparent; padding: 0; }
+    .page-title-row { padding: 0 56px; }
+    .nav-btn { padding: 4px 6px; }
     .app-type { display: none; }
     .status { font-size: 0; }
     .status::before { content: '●'; font-size: 14px; }
