@@ -1,9 +1,8 @@
 import express from 'express';
-import cors from 'cors';
 import * as fs from 'fs';
 import * as path from 'path';
 import { initDb } from './db';
-import { authMiddleware } from './middleware/auth';
+import { assertApiKeyConfigured, authMiddleware } from './middleware/auth';
 import { jsonErrorHandler } from './middleware/json';
 import { syncRoutes } from './services/apps';
 import healthRouter from './routes/health';
@@ -196,7 +195,7 @@ function appItemHtml(a, depth) {
   var pad = 28 + (depth || 0) * 16;
   return '<li style="padding-left:' + pad + 'px">' +
     (a.icon ? '<span class="app-icon">' + a.icon + '</span>' : '') +
-    '<a href="' + a.prefix + '/" class="app-name">' + (a.title || a.name) + '</a>' +
+    '<a href="' + a.prefix + '/" class="app-name">' + escHtml(a.title || a.name) + '</a>' +
     '<span class="app-info"><span class="app-type">' + a.type + '</span> <span class="status ' + a.status + '"' + (editing ? ' data-action="toggle-status" data-name="' + a.name + '"' : '') + '>' + a.status + '</span></span>' +
     '<span class="app-actions">' +
       '<button class="exp-btn" data-name="' + a.name + '">Export</button>' +
@@ -396,13 +395,18 @@ fetch('/api/v1/apps', { headers: authHeaders() })
 }
 
 async function main() {
+  // The API key is root-equivalent (docker.sock); refuse to run misconfigured.
+  assertApiKeyConfigured();
+
   await initDb(DATA_DIR);
   ensureLandingPage();
   await syncRoutes();
 
   const app = express();
 
-  app.use(cors());
+  // No CORS: the landing page and the API are same-origin behind Caddy, and
+  // server-side clients (curl, agents) don't need it. Keeping ACAO:* open
+  // would hand any website a read channel on the API whenever it has the key.
   app.use(express.json({ limit: '50mb' }));
   // Lenient JSON: repair common AI mistakes (single quotes, unquoted keys,
   // trailing commas); otherwise answer 400 in the documented error shape.
@@ -414,6 +418,28 @@ async function main() {
   // Management API — auth required
   app.use('/api/v1/apps', authMiddleware, appsRouter);
   app.use('/api/v1/folders', authMiddleware, foldersRouter);
+
+  // Middleware errors (multer limits, upload filters) fire before route
+  // handlers, so route-level try/catch never sees them. Answer with the
+  // documented JSON error shape instead of Express's HTML page, and clean up
+  // any multer temp file that was orphaned.
+  app.use('/api/v1', (err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (typeof err === 'object' && err !== null && 'message' in err) {
+      const e = err as { name?: string; message: string };
+      if (e.name === 'MulterError' || e.message === 'Only .zip files are accepted') {
+        const files = (req as { files?: { file?: Express.Multer.File[] } }).files;
+        if (files?.file?.[0]?.path) {
+          fs.rmSync(files.file[0].path, { force: true });
+        }
+        res.status(400).json({ error: { code: 'validation_error', message: e.message } });
+        return;
+      }
+    }
+    console.error('Request error:', err);
+    res.status(500).json({
+      error: { code: 'internal_error', message: 'An unexpected error occurred.' },
+    });
+  });
 
   const server = app.listen(PORT, () => {
     console.log(`Management API listening on port ${PORT}`);

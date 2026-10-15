@@ -12,16 +12,36 @@
         reverse_proxy localhost:{$API_PORT:3001}
     }
 
+    # Bare /api (no slash) is not the API — answer 404 instead of falling
+    # into the landing SPA catch-all below.
+    handle /api {
+        respond "not found" 404
+    }
+
     # Machine-readable skill pointer for AI agents
     handle /llms.txt {
-        root * /data/landing
+        root * {$DATA_DIR:/data}/landing
+        header {
+            X-Content-Type-Options "nosniff"
+        }
         file_server
     }
 
     # Landing page — serve index.html for all unmatched paths
     handle {
-        root * /data/landing
+        root * {$DATA_DIR:/data}/landing
+        header {
+            X-Content-Type-Options "nosniff"
+            X-Frame-Options "DENY"
+            Referrer-Policy "strict-origin-when-cross-origin"
+        }
         rewrite * /index.html
         file_server
+    }
+
+    # Access log for static apps — read and filtered by
+    # GET /apps/:name/logs in the management API.
+    log {
+        output file {$DATA_DIR:/data}/caddy/access.log
     }
 }

@@ -7,7 +7,7 @@ services:
     environment:
       - HTTP_PORT=${HTTP_PORT:-80}
       - MANAGEMENT_API_KEY=${MANAGEMENT_API_KEY:?set MANAGEMENT_API_KEY in .env}
-      - PORT=3001
+      - PORT=${PORT:-3001}
       - DATA_DIR=/data
       - CADDY_ADMIN_URL=http://localhost:2019
       - DOCKER_SOCKET=/var/run/docker.sock
@@ -16,6 +16,12 @@ services:
       - app_data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:$$PORT/api/v1/health > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 volumes:
   app_data:

@@ -1,7 +1,13 @@
 import Docker from 'dockerode';
 import * as os from 'os';
+import { DockerError } from './errors';
 
 const docker = new Docker({ socketPath: process.env.DOCKER_SOCKET || '/var/run/docker.sock' });
+
+function toDockerError(err: unknown): DockerError {
+  const msg = err instanceof Error ? err.message : String(err);
+  return new DockerError(msg);
+}
 
 interface DockerAppConfig {
   image: string;
@@ -24,42 +30,45 @@ export async function createContainer(
   config: DockerAppConfig
 ): Promise<string> {
   const containerName = containerNameForApp(appName);
+  try {
+    // Remove existing container with same name if any
+    await removeContainerIfExists(containerName);
 
-  // Remove existing container with same name if any
-  await removeContainerIfExists(containerName);
+    // P2: build once in a one-shot container before the app container starts.
+    // Builds share the app volume, so outputs (node_modules/.next) persist and
+    // the app container's command is just the run command — restarts stay fast.
+    if (config.build_command) {
+      await runBuildContainer(appName, workDir, config);
+    }
 
-  // P2: build once in a one-shot container before the app container starts.
-  // Builds share the app volume, so outputs (node_modules/.next) persist and
-  // the app container's command is just the run command — restarts stay fast.
-  if (config.build_command) {
-    await runBuildContainer(appName, workDir, config);
-  }
+    const envVars = Object.entries(config.env).map(([k, v]) => `${k}=${v}`);
+    const runCmd = config.run_command || config.command;
 
-  const envVars = Object.entries(config.env).map(([k, v]) => `${k}=${v}`);
-  const runCmd = config.run_command || config.command;
-
-  const container = await docker.createContainer({
-    name: containerName,
-    Image: config.image,
-    Env: envVars,
-    Cmd: runCmd ? ['sh', '-c', runCmd] : undefined,
-    WorkingDir: workDir,
-    ExposedPorts: {
-      [`${config.port}/tcp`]: {},
-    },
-    HostConfig: {
-      Mounts: [await appVolumeMount()],
-      CpuShares: parseCpuLimit(config.cpu_limit),
-      Memory: parseMemLimit(config.mem_limit),
-      NetworkMode: 'leafdock_default', // shared Docker network
-      RestartPolicy: {
-        Name: 'unless-stopped',
+    const container = await docker.createContainer({
+      name: containerName,
+      Image: config.image,
+      Env: envVars,
+      Cmd: runCmd ? ['sh', '-c', runCmd] : undefined,
+      WorkingDir: workDir,
+      ExposedPorts: {
+        [`${config.port}/tcp`]: {},
       },
-    },
-  });
+      HostConfig: {
+        Mounts: [await appVolumeMount()],
+        CpuShares: parseCpuLimit(config.cpu_limit),
+        Memory: parseMemLimit(config.mem_limit),
+        NetworkMode: 'leafdock_default', // shared Docker network
+        RestartPolicy: {
+          Name: 'unless-stopped',
+        },
+      },
+    });
 
-  await container.start();
-  return containerName;
+    await container.start();
+    return containerName;
+  } catch (err) {
+    throw toDockerError(err);
+  }
 }
 
 // The shared storage between leafdock and app containers. Explicit APP_VOLUME
@@ -183,12 +192,14 @@ export async function restartContainer(appName: string): Promise<void> {
     const existing = containers.find(c =>
       c.Names.includes(`/${containerName}`)
     );
-    if (existing) {
-      const container = docker.getContainer(existing.Id);
-      await container.restart();
+    if (!existing) {
+      // Callers (restartApp) fall back to recreating from stored config.
+      throw new DockerError(`Container ${containerName} not found`);
     }
-  } catch {
-    throw new Error(`Container ${containerName} not found`);
+    const container = docker.getContainer(existing.Id);
+    await container.restart();
+  } catch (err) {
+    throw toDockerError(err);
   }
 }
 
@@ -230,9 +241,9 @@ export async function getContainerLogs(appName: string, tail: number): Promise<s
 export async function pullImage(image: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     docker.pull(image, (err: Error | null, stream: NodeJS.ReadableStream) => {
-      if (err) return reject(err);
+      if (err) return reject(new DockerError(`Failed to pull image "${image}": ${err.message}`));
       docker.modem.followProgress(stream, (err) => {
-        if (err) return reject(err);
+        if (err) return reject(new DockerError(`Failed to pull image "${image}": ${err.message}`));
         resolve();
       });
     });

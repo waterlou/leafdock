@@ -1,5 +1,24 @@
 const CADDY_ADMIN_URL = process.env.CADDY_ADMIN_URL || 'http://localhost:2019';
 
+// Serialize every route mutation: each one is a full-array read-modify-write
+// against the admin API, and two interleaved operations would clobber each
+// other's routes (the window spans multi-second docker pulls). A failed op
+// must not break the chain, so prior failures are swallowed before running.
+let routeQueue: Promise<void> = Promise.resolve();
+
+async function mutateRoutes(mutator: (routes: CaddyRoute[]) => CaddyRoute[]): Promise<void> {
+  const prev = routeQueue;
+  let release!: () => void;
+  routeQueue = new Promise<void>((r) => { release = r; });
+  await prev.catch(() => {});
+  try {
+    const routes = await getRoutes();
+    await setRoutes(mutator(routes));
+  } finally {
+    release();
+  }
+}
+
 interface CaddyRoute {
   match: Array<{ path: string[] }>;
   handle: Array<Record<string, unknown>>;
@@ -51,64 +70,12 @@ function routeIdForRoot(prefix: string): string {
 }
 
 export async function addStaticRoute(prefix: string, appDir: string, spa: boolean, index: string): Promise<void> {
-  const routes = await getRoutes();
   const routeId = routeIdFor(prefix);
   const rootId = routeIdForRoot(prefix);
 
-  const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== rootId);
+  await mutateRoutes((routes) => {
+    const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== rootId);
 
-  // Redirect exact prefix to prefix/ so relative URLs in HTML resolve correctly
-  const redirectRoute: CaddyRoute = {
-    '@id': rootId,
-    match: [{ path: [prefix] }],
-    handle: [{
-      handler: 'static_response',
-      status_code: 308,
-      headers: { Location: [prefix + '/'] },
-    }],
-  };
-
-  const subRoutes: Record<string, unknown>[] = [
-    {
-      handle: [{ handler: 'rewrite', strip_path_prefix: prefix }],
-    },
-    // After stripping prefix, root path '/' needs explicit rewrite to index
-    // so the file_server receives a file path, not a directory path
-    {
-      match: [{ path: ['/'] }],
-      handle: [{ handler: 'rewrite', uri: '/' + index }],
-    },
-  ];
-
-  if (spa) {
-    subRoutes.push({
-      match: [{ not: [{ file: { root: appDir } }] }],
-      handle: [{ handler: 'rewrite', uri: '/' + index }],
-    });
-  }
-
-  subRoutes.push({
-    handle: [{ handler: 'file_server', root: appDir }],
-  });
-
-  const serveRoute: CaddyRoute = {
-    '@id': routeId,
-    match: [{ path: [`${prefix}/*`] }],
-    handle: [{ handler: 'subroute', routes: subRoutes }],
-  };
-
-  filtered.unshift(serveRoute, redirectRoute);
-  await setRoutes(filtered);
-}
-
-export async function addDockerRoute(prefix: string, containerName: string, port: number, stripPrefix = true): Promise<void> {
-  const routes = await getRoutes();
-  const routeId = routeIdFor(prefix);
-  const rootId = routeIdForRoot(prefix);
-
-  const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== rootId);
-
-  if (stripPrefix) {
     // Redirect exact prefix to prefix/ so relative URLs in HTML resolve correctly
     const redirectRoute: CaddyRoute = {
       '@id': rootId,
@@ -119,46 +86,100 @@ export async function addDockerRoute(prefix: string, containerName: string, port
         headers: { Location: [prefix + '/'] },
       }],
     };
-    filtered.unshift(redirectRoute);
-  }
 
-  // Strip mode: subroute strips the prefix before forwarding to the container
-  // (the app serves at its own root). Pass-through mode: forward the prefix
-  // path untouched — for apps built with a native base path (e.g. Next.js
-  // BASE_PATH), which expect to receive /travel-expense/... requests intact.
-  // No exact-prefix redirect in pass-through mode: the app's own base-path
-  // redirect would fight it (infinite loop).
-  const serveRoute: CaddyRoute = {
-    '@id': routeId,
-    match: [{ path: stripPrefix ? [`${prefix}/*`] : [prefix, `${prefix}/*`] }],
-    handle: [{
-      handler: 'subroute',
-      routes: stripPrefix
-        ? [
-            { handle: [{ handler: 'rewrite', strip_path_prefix: prefix }] },
-            { handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `${containerName}:${port}` }] }] },
-          ]
-        : [{ handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `${containerName}:${port}` }] }] }],
-    }],
-  };
+    const subRoutes: Record<string, unknown>[] = [
+      {
+        handle: [{ handler: 'rewrite', strip_path_prefix: prefix }],
+      },
+      // After stripping prefix, root path '/' needs explicit rewrite to index
+      // so the file_server receives a file path, not a directory path
+      {
+        match: [{ path: ['/'] }],
+        handle: [{ handler: 'rewrite', uri: '/' + index }],
+      },
+    ];
 
-  filtered.unshift(serveRoute);
-  await setRoutes(filtered);
+    if (spa) {
+      subRoutes.push({
+        match: [{ not: [{ file: { root: appDir } }] }],
+        handle: [{ handler: 'rewrite', uri: '/' + index }],
+      });
+    }
+
+    subRoutes.push({
+      handle: [{ handler: 'file_server', root: appDir }],
+    });
+
+    const serveRoute: CaddyRoute = {
+      '@id': routeId,
+      match: [{ path: [`${prefix}/*`] }],
+      handle: [{ handler: 'subroute', routes: subRoutes }],
+    };
+
+    filtered.unshift(serveRoute, redirectRoute);
+    return filtered;
+  });
+}
+
+export async function addDockerRoute(prefix: string, containerName: string, port: number, stripPrefix = true): Promise<void> {
+  const routeId = routeIdFor(prefix);
+  const rootId = routeIdForRoot(prefix);
+
+  await mutateRoutes((routes) => {
+    const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== rootId);
+
+    if (stripPrefix) {
+      // Redirect exact prefix to prefix/ so relative URLs in HTML resolve correctly
+      const redirectRoute: CaddyRoute = {
+        '@id': rootId,
+        match: [{ path: [prefix] }],
+        handle: [{
+          handler: 'static_response',
+          status_code: 308,
+          headers: { Location: [prefix + '/'] },
+        }],
+      };
+      filtered.unshift(redirectRoute);
+    }
+
+    // Strip mode: subroute strips the prefix before forwarding to the container
+    // (the app serves at its own root). Pass-through mode: forward the prefix
+    // path untouched — for apps built with a native base path (e.g. Next.js
+    // BASE_PATH), which expect to receive /travel-expense/... requests intact.
+    // No exact-prefix redirect in pass-through mode: the app's own base-path
+    // redirect would fight it (infinite loop).
+    const serveRoute: CaddyRoute = {
+      '@id': routeId,
+      match: [{ path: stripPrefix ? [`${prefix}/*`] : [prefix, `${prefix}/*`] }],
+      handle: [{
+        handler: 'subroute',
+        routes: stripPrefix
+          ? [
+              { handle: [{ handler: 'rewrite', strip_path_prefix: prefix }] },
+              { handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `${containerName}:${port}` }] }] },
+            ]
+          : [{ handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `${containerName}:${port}` }] }] }],
+      }],
+    };
+
+    filtered.unshift(serveRoute);
+    return filtered;
+  });
 }
 
 export async function removeRoute(prefix: string): Promise<void> {
-  const routes = await getRoutes();
   const routeId = routeIdFor(prefix);
   const rootId = routeIdForRoot(prefix);
-  const filtered = routes.filter(r => r['@id'] !== routeId && r['@id'] !== rootId);
-  await setRoutes(filtered);
+  await mutateRoutes((routes) => {
+    return routes.filter(r => r['@id'] !== routeId && r['@id'] !== rootId);
+  });
 }
 
 // Drop every Leafdock-owned route (legacy 'app-<name>' ids and current
 // 'app-%2F...' / 'app-r-%2F...' ids). Routes are rebuilt from DB rows on boot,
 // which migrates legacy ids and self-heals drift.
 export async function clearAppRoutes(): Promise<void> {
-  const routes = await getRoutes();
-  const filtered = routes.filter(r => !r['@id'] || !r['@id'].startsWith('app-'));
-  await setRoutes(filtered);
+  await mutateRoutes((routes) => {
+    return routes.filter(r => !r['@id'] || !r['@id'].startsWith('app-'));
+  });
 }

@@ -3,3 +3,7 @@ node_modules/
 *.db
 .env
 .DS_Store
+# The hosted-app store can be GBs — never ship it as build context.
+data/
+dist/
+scripts/

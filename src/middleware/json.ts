@@ -82,12 +82,21 @@ export function jsonErrorHandler(err: unknown, req: Request, res: Response, next
   ) {
     try {
       req.body = JSON.parse(repairJsonish(err.body));
-      console.warn('Repaired malformed JSON request body:', JSON.stringify(err.body.slice(0, 200)));
+      console.warn('Repaired malformed JSON request body.');
       next();
       return;
     } catch {
       // fall through to the clean 400 below
     }
+  }
+  if (typeof err === 'object' && err !== null && 'type' in err && err.type === 'entity.too.large') {
+    res.status(413).json({
+      error: {
+        code: 'validation_error',
+        message: 'Request body too large (max 50mb).',
+      },
+    });
+    return;
   }
   res.status(400).json({
     error: {
