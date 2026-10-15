@@ -1,5 +1,7 @@
 import { Router, Request, Response } from 'express';
+import * as fs from 'fs';
 import * as apps from '../services/apps';
+import { ComposePolicyError } from '../services/compose-validation';
 import { uploadMiddleware } from '../middleware/upload';
 
 const router = Router();
@@ -30,16 +32,21 @@ router.post('/', async (req: Request, res: Response) => {
 
 // POST /api/v1/apps/upload — zip upload
 router.post('/upload', uploadMiddleware, async (req: Request, res: Response) => {
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+  const zipPath = files?.file?.[0]?.path;
   try {
-    const files = req.files as { [fieldname: string]: Express.Multer.File[] };
-    if (!files?.file?.[0]) {
+    if (!zipPath) {
       res.status(400).json({ error: { code: 'validation_error', message: 'No zip file uploaded. Use form field "file".' } });
       return;
     }
 
-    const config = req.body?.config
-      ? JSON.parse(req.body.config)
-      : {};
+    let config: Record<string, unknown>;
+    try {
+      config = req.body?.config ? JSON.parse(req.body.config) : {};
+    } catch {
+      res.status(400).json({ error: { code: 'validation_error', message: '"config" must be valid JSON.' } });
+      return;
+    }
 
     if (!config.name || !config.type) {
       res.status(400).json({ error: { code: 'validation_error', message: 'Config must include "name" and "type".' } });
@@ -57,16 +64,19 @@ router.post('/upload', uploadMiddleware, async (req: Request, res: Response) => 
     }
 
     const app = await apps.createAppFromZip(
-      config.name,
-      config.type,
-      files.file[0].path,
-      config.config,
-      config.folder,
-      config.icon
+      config.name as string,
+      config.type as 'static' | 'docker' | 'docker-compose',
+      zipPath,
+      config.config as apps.AppConfig | undefined,
+      config.folder as string | undefined,
+      config.icon as string | undefined
     );
     res.status(201).json(app);
   } catch (err) {
     handleError(res, err);
+  } finally {
+    // Never leak the multer temp file, whatever happened above.
+    if (zipPath) fs.rmSync(zipPath, { force: true });
   }
 });
 
@@ -101,10 +111,11 @@ router.post('/git', async (req: Request, res: Response) => {
 
 // PUT /api/v1/apps/:name/upload — zip update
 router.put('/:name/upload', uploadMiddleware, async (req: Request, res: Response) => {
+  const name = param(req, 'name');
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+  const zipPath = files?.file?.[0]?.path;
   try {
-    const name = param(req, 'name');
-    const files = req.files as { [fieldname: string]: Express.Multer.File[] };
-    if (!files?.file?.[0]) {
+    if (!zipPath) {
       res.status(400).json({ error: { code: 'validation_error', message: 'No zip file uploaded. Use form field "file".' } });
       return;
     }
@@ -112,9 +123,15 @@ router.put('/:name/upload', uploadMiddleware, async (req: Request, res: Response
     let config: apps.AppConfig | undefined;
     let icon: string | undefined;
     if (req.body?.config) {
-      const body = JSON.parse(req.body.config);
-      config = body.config;
-      icon = body.icon;
+      let body: Record<string, unknown>;
+      try {
+        body = JSON.parse(req.body.config);
+      } catch {
+        res.status(400).json({ error: { code: 'validation_error', message: '"config" must be valid JSON.' } });
+        return;
+      }
+      config = body.config as apps.AppConfig | undefined;
+      icon = typeof body.icon === 'string' ? body.icon : undefined;
     }
 
     if (icon !== undefined && typeof icon !== 'string') {
@@ -122,10 +139,12 @@ router.put('/:name/upload', uploadMiddleware, async (req: Request, res: Response
       return;
     }
 
-    const app = await apps.updateAppFromZip(name, files.file[0].path, config, icon);
+    const app = await apps.updateAppFromZip(name, zipPath, config, icon);
     res.json(app);
   } catch (err) {
     handleError(res, err);
+  } finally {
+    if (zipPath) fs.rmSync(zipPath, { force: true });
   }
 });
 
@@ -223,10 +242,19 @@ router.get('/:name/zip', (req: Request, res: Response) => {
   }
 });
 
+// GET /api/v1/apps/:name/compose-check
+router.get('/:name/compose-check', (req: Request, res: Response) => {
+  try {
+    res.json(apps.checkCompose(param(req, 'name')));
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
 // GET /api/v1/apps/:name/logs
 router.get('/:name/logs', async (req: Request, res: Response) => {
   try {
-    const tail = parseInt(req.query.tail as string) || 100;
+    const tail = Math.min(Math.max(parseInt(req.query.tail as string) || 100, 1), 10_000);
     const logs = await apps.getLogs(param(req, 'name'), tail);
     res.json({ logs });
   } catch (err) {
@@ -282,22 +310,37 @@ router.post('/:name/move', async (req: Request, res: Response) => {
 });
 
 export function handleError(res: Response, err: unknown): void {
+  // A compose file that fails the host-safety policy is a client error with a
+  // list of concrete violations, not an internal failure.
+  if (err instanceof ComposePolicyError) {
+    res.status(400).json({
+      error: { code: err.code, message: err.message, violations: err.violations },
+    });
+    return;
+  }
+
   if (err instanceof apps.ValidationError) {
-    // Check if it's a "not found" or "already exists" style message
-    if (err.message.includes('not found')) {
+    if (err.code === 'app_not_found') {
       res.status(404).json({
         error: { code: 'app_not_found', message: err.message },
       });
-    } else if (err.message.includes('already exists') || err.message.includes('already in use')) {
-      const code = err.message.includes('already in use') ? 'prefix_conflict' : 'app_already_exists';
-      res.status(code === 'prefix_conflict' ? 400 : 409).json({
-        error: { code, message: err.message },
+    } else if (err.code === 'app_already_exists') {
+      res.status(409).json({
+        error: { code: 'app_already_exists', message: err.message },
       });
     } else {
       res.status(400).json({
-        error: { code: 'validation_error', message: err.message },
+        error: { code: err.code, message: err.message },
       });
     }
+    return;
+  }
+
+  if (err instanceof apps.DockerError) {
+    console.error('Docker operation failed:', err.message);
+    res.status(500).json({
+      error: { code: 'docker_error', message: err.message },
+    });
     return;
   }
 

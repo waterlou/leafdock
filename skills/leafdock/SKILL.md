@@ -27,6 +27,8 @@ A container built from source files. Files are mounted at `/app`, the container 
 
 Config: `{ image: "node:20-alpine", port: 3000, env: {}, command: "npm install && node server.js", cpu_limit: "0.5", mem_limit: "128m" }`
 
+The container has no user-supplied mounts or host options: it gets exactly one mount (`/app`, the app's storage) and joins the `leafdock_default` network. Everything the app persists must live under `/app`.
+
 **Apps with a native base path** (e.g. Next.js built with `BASE_PATH=/my-app`, deployed the same way as a direct hosting setup): set `strip_prefix: false` in the config and build the app with its `BASE_PATH` set. The prefix then passes through to the container untouched — the app serves `/my-app/...` itself, exactly like `https://app.example.com/my-app`. Without `strip_prefix: false` the prefix is stripped, so the app must serve at its root (no base path).
 
 ### docker-compose
@@ -36,8 +38,16 @@ Use for apps with multiple services: a web frontend, an API, a database, etc.
 
 Config: `{ compose_file?: "docker-compose.yml", services: { web: { port: 3000 }, api: { port: 4000 } } }`
 
-- `compose_file` — defaults to `docker-compose.yml` if not specified
+- `compose_file` — defaults to `docker-compose.yml` if not specified. Must be a bare `.yml`/`.yaml` filename inside the app directory (no paths, no shell characters) — anything else is rejected with `400 validation_error`.
 - `services` — map of service name to port. Only services that need Caddy routing should be listed here. Internal services (databases, caches) stay on the compose internal network and should be omitted.
+- **The compose file is validated against a host-safety policy before anything starts.** A rejection is `400 compose_policy_violation` and `error.violations` lists every problem (nothing is created or started). Write compose files that pass the first time:
+  - no host escapes: `network_mode`/`pid`/`ipc`/`uts`/`userns_mode`, `privileged`, `cap_add`, `devices`, `sysctls`, `group_add`, `volumes_from`, `extends`, `container_name` (Caddy routes by container name), top-level `secrets`/`configs`/`include`
+  - no `external: true` networks and no `host`/`none`/`bridge` network names — keep services on the default network and let Caddy route to them
+  - no binding host paths outside the app directory, no named volumes with `driver_opts`/`external`, `build.context` and `env_file` stay inside the app directory
+  - **no fixed published host ports** (`"3000:3000"` is rejected by default). Use target-only specs (`ports: ["3000"]`) or no `ports` at all — a database gets `image: postgres:16` and no `ports`. If the app genuinely needs a host port, the operator must set `LEAFDOCK_ALLOWED_HOST_PORTS` (same for host bind paths via `LEAFDOCK_ALLOWED_BIND_PATHS`) — tell the user instead of guessing.
+  - unknown keys are rejected rather than ignored, so stick to documented compose keys; `security_opt` accepts only `no-new-privileges` and a seccomp profile from the app directory.
+- The compose process inherits only a small whitelist of environment variables, so **`${VAR}` in a compose file cannot read leafdock's own env** (no `${MANAGEMENT_API_KEY}`, no `${GIT_TOKEN}`). Put values the app needs in its own `.env` file in the app directory or inline under `environment:`.
+- `GET /apps/:name/compose-check` audits an already-stored compose file without deploying it — useful after a policy change or to explain a rejection.
 
 Example payload:
 ```json
@@ -189,6 +199,13 @@ POST /apps/:name/restart
 → 200 + app object
 ```
 No-op for static apps. Restarts container for docker apps.
+
+### Compose Check
+```
+GET /apps/:name/compose-check
+→ { valid: false, services: ["web"], violations: ["web: \"privileged\" is not allowed ..."] }
+```
+Validates the stored compose file against the host-safety policy without deploying. `404` if the app doesn't exist, `400` if it isn't a `docker-compose` app. Use it to audit after changing `LEAFDOCK_ALLOWED_BIND_PATHS` / `LEAFDOCK_ALLOWED_HOST_PORTS`.
 
 ### Health Check
 ```
@@ -386,6 +403,7 @@ Send valid JSON (double quotes, quoted keys). The API tolerates common mistakes 
 | `invalid_name` | Name doesn't match allowed pattern |
 | `prefix_conflict` | URL prefix already in use |
 | `validation_error` | Missing or invalid fields |
+| `compose_policy_violation` | Compose file failed the host-safety policy — read `error.violations` and fix every entry; nothing was started |
 | `docker_error` | Docker operation failed |
 | `unauthorized` | Missing or wrong API key |
 

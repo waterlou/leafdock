@@ -73,7 +73,7 @@ Register a new app. The request includes the app name, type, all source files, a
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | yes | URL-safe slug. Must match `^[a-z0-9]+(-[a-z0-9]+)*$` |
+| `name` | yes | URL-safe slug. Must match `^[a-z][a-z0-9]*(-[a-z0-9]+)*$` — lowercase, hyphens, must start with a letter |
 | `type` | yes | `"static"`, `"docker"`, or `"docker-compose"` |
 | `prefix` | no | URL prefix. Defaults to `/<name>`. Normalized to lowercase. |
 | `folder` | no | Optional subfolder (e.g. `"blog"` or `"blog/tutorials"`). Mutually exclusive with `prefix`. `""` (or omitted) = root. The disk layout mirrors it: an app in folder `blog` lives at `<data>/apps/blog/<name>` and is served at `/blog/<name>/`. Case is normalized to lowercase (`"Demo"` → `demo`). |
@@ -106,11 +106,13 @@ Register a new app. The request includes the app name, type, all source files, a
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `compose_file` | string | `"docker-compose.yml"` | Compose file name |
+| `compose_file` | string | `"docker-compose.yml"` | Compose file name. Must be a bare `.yml`/`.yaml` filename inside the app directory (no path separators or shell characters) |
 | `services` | object | `{}` | Map of service name to `{ port }` for Caddy routing |
 | `strip_prefix` | boolean | `true` | Same as docker type: `false` passes the prefix through untouched for native base-path apps |
 
 Only services that need HTTP routing should be listed in `services`. The first service gets the main prefix (`/<name>/`), additional services get sub-prefixes (`/<name>/<serviceName>/`). Internal services (databases, caches) stay on the compose internal network and should be omitted.
+
+**Host-safety policy.** Compose files are validated against an allowlist before `docker compose up` runs — leafdock holds the docker socket, so an unvalidated compose file is a host-root request (`network_mode: host` + `cap_add: [NET_ADMIN]` rewrites the host firewall; `privileged: true`, `pid: host` and `/`-binds are equally direct). A rejected file returns `400` with `code: "compose_policy_violation"` and a `violations` array; nothing is started. Denied by default: host namespaces (`network_mode`, `pid`, `ipc`, `uts`, `userns_mode`), `privileged`, `cap_add`, `devices`, `sysctls`, `group_add`, `volumes_from`, `extends`, weakened `security_opt` (`no-new-privileges` and a seccomp profile from the app directory are allowed; `seccomp=unconfined`, `apparmor=unconfined`, `label=disable` are refused), non-docker logging drivers, `container_name` (Caddy routes by container name), top-level `secrets`/`configs`/`include`, external and host-attached networks (an `external: true` network reaches every other project on it; a network named `host`/`none`/`bridge`, or with a `name` that is not a plain network name, is refused), named volumes with `driver_opts`/`external`, bind mounts and build contexts outside the app directory, and fixed published host ports. `GET /apps/:name/compose-check` applies the same policy to an already-stored file. An admin can widen the policy with `LEAFDOCK_ALLOWED_BIND_PATHS` and `LEAFDOCK_ALLOWED_HOST_PORTS` (both empty by default; see README).
 
 **All types accept `preserve_dirs`** (optional, array of relative directory paths): runtime-data directories inside the app directory that survive file replacement — SQLite databases, uploads, etc. Without it, every zip/file update wipes the whole app directory first. Example: `"preserve_dirs": ["prisma/data", "public/uploads"]`. Entries must be relative, non-empty, and free of `..`/`.`/`\`; max 20.
 
@@ -147,6 +149,8 @@ POST /apps/upload
 ```
 
 Create a new app by uploading a zip file. The zip is extracted to the app's directory. Use this for apps with binary files (images, fonts, videos) to avoid base64 encoding.
+
+Limits: the uploaded archive must be a `.zip` file of at most 100 MB (compressed). Extraction is guarded against zip bombs: at most 100,000 entries, 1 GB per entry (uncompressed), 2 GB total (uncompressed) — larger archives are rejected with `validation_error`.
 
 **Request:** `multipart/form-data`
 
@@ -341,7 +345,7 @@ curl -o app.zip https://nas.ts.net/api/v1/apps/photo-gallery/zip \
 PUT /apps/:name
 ```
 
-Full replacement. Replaces all files, config, and restarts the app. The `name` in the URL must match the `name` in the body.
+Full replacement. Replaces all files, config, and restarts the app. The `name` in the URL must match the `name` in the body; `type` cannot be changed (it is immutable after create).
 
 **Request body:** Same shape as POST.
 
@@ -478,12 +482,33 @@ GET /apps/:name/logs?tail=100
 Returns recent logs. For static apps, returns Caddy access logs. For docker apps, returns container stdout/stderr. For docker-compose apps, returns logs for all services via `docker compose logs`.
 
 **Query parameters:**
-- `tail` (optional, default `100`) — Number of log lines to return
+- `tail` (optional, default `100`, max `10000`) — Number of log lines to return
 
 **Response 200:**
 ```json
 {
   "logs": "2026-05-14T10:01:00Z GET /todo-app 200 ...\n2026-05-14T10:01:01Z GET /todo-app/style.css 200 ..."
+}
+```
+
+---
+
+### Compose Check
+
+```
+GET /apps/:name/compose-check
+```
+
+Validates the stored `docker-compose.yml` against the host-safety policy without deploying. Use it to audit existing docker-compose apps (for example after changing `LEAFDOCK_ALLOWED_BIND_PATHS`).
+
+**Response 200:**
+```json
+{
+  "valid": false,
+  "services": ["web", "db"],
+  "violations": [
+    "web: \"network_mode\" is not allowed — services run on the leafdock network and are routed by Caddy"
+  ]
 }
 ```
 
@@ -495,9 +520,33 @@ Returns recent logs. For static apps, returns Caddy access logs. For docker apps
 POST /apps/:name/restart
 ```
 
-Restarts the app. For static apps this is a no-op. For docker apps it restarts the container. For docker-compose apps it runs `docker compose down` followed by `docker compose up`.
+Restarts the app. For static apps this is a no-op. For docker apps it restarts the container (recreating it from the stored config if the container is missing, e.g. after a stop). For docker-compose apps it runs `docker compose down` followed by `docker compose up`.
 
 **Response 200:** App object with updated status.
+
+**Errors:**
+- `404` — App not found
+- `500` `docker_error` — Docker operation failed
+
+### Stop App
+
+```
+POST /apps/:name/stop
+```
+
+Stops the app. The Caddy route is removed, the docker container is stopped (kept for build-split apps so build outputs survive; removed otherwise), and docker-compose services are brought down. Static apps are unaffected beyond the route removal.
+
+**Response 200:** App object with `status: "stopped"`.
+
+### Start App
+
+```
+POST /apps/:name/start
+```
+
+Starts the app: recreates the Caddy route, and for docker apps pulls the image and creates/starts the container (build-split apps with a kept container just start it). For docker-compose apps it runs `docker compose up`.
+
+**Response 200:** App object with `status: "running"`.
 
 ---
 
@@ -536,6 +585,8 @@ All errors follow this structure:
 | `invalid_name` | 400 | Name contains invalid characters |
 | `prefix_conflict` | 400 | The requested URL prefix is already in use |
 | `validation_error` | 400 | Missing or invalid fields in request body |
+| `compose_policy_violation` | 400 | The compose file violates the host-safety policy; `error.violations` lists every problem |
 | `docker_error` | 500 | Docker operation failed (check error_message) |
 | `unauthorized` | 401 | Missing or invalid API key |
+| `rate_limited` | 429 | Too many failed authentication attempts from this address (30 per minute) |
 | `internal_error` | 500 | Unexpected server error |

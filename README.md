@@ -89,7 +89,7 @@ docker run -d \
   caddy:2-alpine
 
 # Set environment variables
-export MANAGEMENT_API_KEY=my-secret-key
+export MANAGEMENT_API_KEY=my-secret-key-32-chars-minimum
 export CADDY_ADMIN_URL=http://localhost:2019
 export DOCKER_SOCKET=/var/run/docker.sock
 export DATA_DIR=./data
@@ -194,12 +194,25 @@ Multiple containers defined in a `docker-compose.yml`. Caddy routes to individua
 
 | Config option | Default | Description |
 |---------------|---------|-------------|
-| `compose_file` | `docker-compose.yml` | Compose file name to use |
+| `compose_file` | `docker-compose.yml` | Compose file name to use. Must be a bare `.yml`/`.yaml` filename inside the app directory |
 | `services` | `{}` | Map of service name to `{ port }` for Caddy routing |
 
 The uploaded files (compose file, Dockerfiles, source) are placed in `/data/apps/<name>/` (or `/data/apps/<folder>/<name>/` in a subfolder) and `docker compose up -d` starts all services. Internal services like databases that don't need HTTP routing should be omitted from `config.services`.
 
-> If you plan to contribute: `src/services/compose.ts` handles Docker Compose lifecycle, `src/services/docker.ts` handles single-container lifecycle.
+**Compose files are validated before they run.** Leafdock holds the docker socket, so an uploaded compose file is a host-root request: `network_mode: host` + `cap_add: [NET_ADMIN]` rewrites the NAS firewall, `pid: host` exposes its process table, `privileged: true` is plain root, and a `/`-bind reads every file. Every compose file is therefore checked against an allowlist (see `src/services/compose-validation.ts`) before `docker compose up`; a rejected file returns `400 compose_policy_violation` listing each problem and nothing is started. Denied by default: host namespaces (`network_mode`, `pid`, `ipc`, `uts`, `userns_mode`), `privileged`, `cap_add`, `devices`, `sysctls`, `group_add`, `volumes_from`, `extends`, non-default `security_opt`/logging drivers (a seccomp profile from the app directory and `no-new-privileges` are accepted), `container_name`, top-level `secrets`/`configs`/`include`, external and host-attached networks (including a network named `host`/`none`/`bridge`, or one whose `name` is not a plain network name), named volumes with `driver_opts`/`external`, bind mounts and build contexts outside the app directory, and published fixed host ports.
+
+Two opt-ins exist for the cases where an app genuinely needs more — both **off by default**:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LEAFDOCK_ALLOWED_BIND_PATHS` | *(empty)* | Host paths (comma separated, absolute) that compose bind mounts may use in addition to the app's own directory. Entries that are relative, that resolve to `/`, `/proc`, `/sys`, `/dev`, `/etc`, or that point at the docker socket are ignored. |
+| `LEAFDOCK_ALLOWED_HOST_PORTS` | *(empty)* | Host ports a service may publish (`8080`, `8080,9000-9010`, or `any`). Empty means no fixed host port may be claimed — apps are reached through Caddy. Target-only specs (`ports: ["3000"]`) get an ephemeral port and stay allowed. |
+
+`GET /api/v1/apps/:name/compose-check` reports the same violations for an already-stored app without deploying it.
+
+The gate removes the direct host escape routes from compose files; it is **not** a sandbox. `image:` is still uploader-chosen and pulled from the internet, and `docker`-type apps run uploaded code by design. See the [Security](specs.md#security) section of `specs.md` for what is and isn't covered, including the currently-open cross-app mount.
+
+> If you plan to contribute: `src/services/compose.ts` handles Docker Compose lifecycle, `src/services/docker.ts` handles single-container lifecycle, `src/services/compose-validation.ts` defines the compose host-safety policy (`npm test`).
 
 ## API Overview
 
@@ -214,6 +227,7 @@ The uploaded files (compose file, Dockerfiles, source) are placed in `/data/apps
 | `PATCH` | `/api/v1/apps/:name` | Partial update |
 | `DELETE` | `/api/v1/apps/:name` | Remove an app |
 | `GET` | `/api/v1/apps/:name/logs` | View logs |
+| `GET` | `/api/v1/apps/:name/compose-check` | Audit a docker-compose app against the host-safety policy (no deploy) |
 | `POST` | `/api/v1/apps/:name/restart` | Restart app |
 | `POST` | `/api/v1/apps/:name/stop` | Stop app |
 | `POST` | `/api/v1/apps/:name/start` | Start app |
@@ -261,6 +275,7 @@ Full API docs in [api-docs.md](api-docs.md). AI agent usage examples in [skills/
 | `src/services/caddy.ts` | Caddy admin API client |
 | `src/services/docker.ts` | Docker container management |
 | `src/services/compose.ts` | Docker Compose lifecycle |
+| `src/services/compose-validation.ts` | Compose host-safety policy (allowlist over the parsed YAML) |
 | `specs.md` | Project specification |
 | `api-docs.md` | Full API reference |
 | `skills/leafdock/SKILL.md` | How-to guide for AI agents |
@@ -269,11 +284,13 @@ Full API docs in [api-docs.md](api-docs.md). AI agent usage examples in [skills/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MANAGEMENT_API_KEY` | `change-me` | API key for auth |
+| `MANAGEMENT_API_KEY` | required — no default | API key for auth (the placeholder `change-me` is refused at startup) |
 | `PORT` | `3001` | Management API listen port |
 | `DATA_DIR` | `/data` | SQLite and app files directory |
 | `CADDY_ADMIN_URL` | `http://localhost:2019` | Caddy admin API address |
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker socket path |
+| `LEAFDOCK_ALLOWED_BIND_PATHS` | *(empty)* | Host paths compose bind mounts may use, beyond the app directory (see Docker Compose) |
+| `LEAFDOCK_ALLOWED_HOST_PORTS` | *(empty)* | Host ports services may publish (`8080`, `9000-9010`, `any`) |
 | `TITLE` | `Leafdock` | Landing page title |
 
 ## Development
