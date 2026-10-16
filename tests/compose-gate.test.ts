@@ -97,3 +97,89 @@ test('compose-check audits an app that is already stored', async () => {
   assert.deepEqual(result.services, ['web']);
   assert.match(result.violations.join('\n'), /network_mode/);
 });
+
+// The zip-bomb caps were applied on create only; the update path extracted the
+// archive unchecked. Behavioural check on the real code path: build an archive
+// whose central directory declares an oversized entry and drive both endpoints.
+test('both zip extraction paths reject an oversize archive', async () => {
+  const AdmZip = (await import('adm-zip')).default;
+  const apps = await import('../src/services/apps');
+
+  const big = new AdmZip();
+  // Declare a 2GB entry without storing 2GB: adm-zip reads the central
+  // directory size field, which is what validateZipEntries bounds.
+  big.addFile('huge.bin', Buffer.alloc(1024));
+  const entry = big.getEntry('huge.bin');
+  entry.header.size = 3 * 1024 * 1024 * 1024;
+  const zipPath = path.join(dataDir, 'oversize.zip');
+  fs.writeFileSync(zipPath, big.toBuffer());
+
+  await assert.rejects(
+    () => apps.createAppFromZip('zipsize-create', 'static', zipPath),
+    /Zip entry too large|expands beyond/
+  );
+
+  // Same archive via the update endpoint (the path that used to be unguarded).
+  const now = new Date().toISOString();
+  db.createApp({
+    name: 'zipsize-update',
+    type: 'static',
+    prefix: '/zipsize-update',
+    status: 'running',
+    config: JSON.stringify({ index: 'index.html', spa: false }),
+    container_id: null,
+    icon: '',
+    created_at: now,
+    updated_at: now,
+  });
+  const zipPath2 = path.join(dataDir, 'oversize2.zip');
+  fs.copyFileSync(zipPath, zipPath2);
+  await assert.rejects(
+    () => apps.updateAppFromZip('zipsize-update', zipPath2),
+    /Zip entry too large|expands beyond/
+  );
+});
+
+// adm-zip's decompression-bomb protection only applies `maxOutputLength` when
+// the entry declares a size > 0, so a header forged to size 0 bypassed the cap
+// entirely (GHSA-rcw4-f5rp-g42v). Verified: an archive declaring size 0
+// inflated tens of MB in this process. Build a valid archive and patch the two
+// uncompressed-size fields to 0.
+test('rejects a zip entry that declares no uncompressed size but carries data', async () => {
+  const AdmZip = (await import('adm-zip')).default;
+  const raw = Buffer.alloc(8 * 1024 * 1024, 0x41);
+  const built = new AdmZip();
+  built.addFile('bomb.bin', raw);
+  const buf = built.toBuffer();
+  buf.writeUInt32LE(0, 22); // local file header: uncompressed size
+  buf.writeUInt32LE(0, buf.readUInt32LE(buf.length - 6) + 24); // central directory
+  const forged = path.join(dataDir, 'forged-size.zip');
+  fs.writeFileSync(forged, buf);
+
+  const entry = new AdmZip(forged).getEntries()[0];
+  assert.equal(entry.header.size, 0, 'fixture should declare size 0');
+  assert.ok(entry.header.compressedSize > 0, 'fixture should carry compressed data');
+
+  const apps = await import('../src/services/apps');
+  await assert.rejects(
+    () => apps.createAppFromZip('forged-size', 'static', forged),
+    /declares no uncompressed size/
+  );
+});
+
+// A running docker/compose app has its own directory mounted read-write, so it
+// can plant `ln -s /data/management.db leak`. Caddy's file_server follows such
+// links out of its root (verified with a real Caddy), and the API's own file
+// reads follow them too.
+test('an app directory symlink cannot leak a file outside it', async () => {
+  const dir = path.join(dataDir, 'apps', 'linkapp');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'index.html'), 'app', 'utf-8');
+  fs.writeFileSync(path.join(dataDir, 'outside-secret.txt'), 'TOP-SECRET', 'utf-8');
+  fs.symlinkSync(path.join(dataDir, 'outside-secret.txt'), path.join(dir, 'leak.txt'));
+
+  const { stripEscapingSymlinks } = await import('../src/services/git');
+  stripEscapingSymlinks(dir);
+  assert.equal(fs.existsSync(path.join(dir, 'leak.txt')), false, 'escaping symlink should be removed');
+  assert.equal(fs.existsSync(path.join(dir, 'index.html')), true, 'real files must survive');
+});

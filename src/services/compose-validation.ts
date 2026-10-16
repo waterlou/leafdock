@@ -571,9 +571,21 @@ function checkVolumes(name: string, volumes: unknown, policy: Policy, problems: 
 
 // Short syntax is SOURCE:TARGET[:MODE]; a single segment is an anonymous volume
 // (target only).
+//
+// Compose reads a single-letter prefix followed by ':' as a Windows drive letter
+// and therefore does NOT split `v:/data` into SOURCE:TARGET at all: the daemon
+// receives an anonymous volume whose mount path is the literal string `v:/data`
+// and refuses to start it ("mount path must be absolute"). Verified against the
+// compose CLI leafdock ships: `v:/data` → `type: volume, target: v:/data` →
+// up fails, while the long syntax (`type: volume, source: v, target: /data`)
+// starts fine, as does any multi-letter name (`db:/data`, `1:/data`). So the
+// rejection is correct — only the reason was misreported as "a Windows path",
+// which sent authors looking in the wrong place. Both shapes land here.
 function checkShortMount(name: string, where: string, entry: string, policy: Policy, problems: string[]): void {
   if (/^[A-Za-z]:[\\/]/.test(entry)) {
-    problems.push(`${name}: ${where} uses a Windows-style path, which is not supported on the NAS`);
+    problems.push(
+      `${name}: ${where} "${entry}" begins with a single-letter "X:" prefix, which docker compose reads as a Windows drive letter — the mount is then rejected as non-absolute. For a single-letter named volume use the long syntax ({ type: volume, source: v, target: /data }); a Windows host path is not supported on the NAS.`
+    );
     return;
   }
   const parts = entry.split(':');

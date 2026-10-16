@@ -12,12 +12,33 @@ import foldersRouter from './routes/folders';
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const DATA_DIR = process.env.DATA_DIR || '/data';
 
+// HTML text/attribute escaping for values interpolated into the generated
+// landing page (the page is built as a string, so an unescaped value becomes
+// markup).
+function escHtmlText(s: string): string {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function ensureLandingPage(): void {
   const landingDir = path.join(DATA_DIR, 'landing');
   fs.mkdirSync(landingDir, { recursive: true });
 
   const indexPath = path.join(landingDir, 'index.html');
-  const title = process.env.TITLE || 'Leafdock';
+  const rawTitle = process.env.TITLE || 'Leafdock';
+  // TITLE is interpolated into HTML text, an HTML attribute context, and a JS
+  // string literal inside the page's inline <script>. Each needs its own
+  // escaping: an apostrophe alone ("Bob's Apps") otherwise emits
+  // `titleEl.textContent = 'Bob's Apps';` — a syntax error that kills the whole
+  // inline script (the landing page renders nothing), and a crafted value
+  // executes arbitrary JS on the landing origin, where localStorage holds the
+  // root-equivalent API key.
+  const title = escHtmlText(rawTitle);
+  const titleJs = JSON.stringify(rawTitle).replace(/</g, '\\u003c');
 
   // Machine-readable pointer for AI agents (llms.txt convention): the usage
   // skill is the authoritative how-to for the management API.
@@ -195,11 +216,11 @@ function appItemHtml(a, depth) {
   var pad = 28 + (depth || 0) * 16;
   return '<li style="padding-left:' + pad + 'px">' +
     (a.icon ? '<span class="app-icon">' + a.icon + '</span>' : '') +
-    '<a href="' + a.prefix + '/" class="app-name">' + escHtml(a.title || a.name) + '</a>' +
-    '<span class="app-info"><span class="app-type">' + a.type + '</span> <span class="status ' + a.status + '"' + (editing ? ' data-action="toggle-status" data-name="' + a.name + '"' : '') + '>' + a.status + '</span></span>' +
+    '<a href="' + escHtml(a.prefix) + '/" class="app-name">' + escHtml(a.title || a.name) + '</a>' +
+    '<span class="app-info"><span class="app-type">' + escHtml(a.type) + '</span> <span class="status ' + escHtml(a.status) + '"' + (editing ? ' data-action="toggle-status" data-name="' + escHtml(a.name) + '"' : '') + '>' + escHtml(a.status) + '</span></span>' +
     '<span class="app-actions">' +
-      '<button class="exp-btn" data-name="' + a.name + '">Export</button>' +
-      '<button class="del-btn" data-name="' + a.name + '">Delete</button>' +
+      '<button class="exp-btn" data-name="' + escHtml(a.name) + '">Export</button>' +
+      '<button class="del-btn" data-name="' + escHtml(a.name) + '">Delete</button>' +
     '</span></li>';
 }
 
@@ -255,7 +276,7 @@ function updateNav() {
   if (currentFolder === '') {
     back.style.display = 'none';
     root.style.display = 'none';
-    titleEl.textContent = '${title}';
+    titleEl.textContent = ${titleJs};
     return;
   }
   back.style.display = 'inline-block';
@@ -386,7 +407,16 @@ fetch('/api/v1/apps', { headers: authHeaders() })
     if (e.message === 'auth') {
       list.innerHTML = '<div class="error-detail"><strong>Unauthorized</strong> &mdash; <a href="#" onclick="const k=prompt(\\'Enter API key:\\');if(k){localStorage.setItem(\\'apiKey\\',k);location.reload()}return false" style="color:var(--link)">set API key</a></div>';
     } else {
-      list.innerHTML = '<div class="error-detail">Could not load apps. <strong>' + e.message + '</strong></div>';
+      // e.message can be a decoding/parse error whose text quotes the response
+      // body; build the node and assign textContent so it can never be markup.
+      var box = document.createElement('div');
+      box.className = 'error-detail';
+      box.appendChild(document.createTextNode('Could not load apps. '));
+      var strong = document.createElement('strong');
+      strong.textContent = e.message;
+      box.appendChild(strong);
+      list.innerHTML = '';
+      list.appendChild(box);
     }
   });
 </script>

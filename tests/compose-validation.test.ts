@@ -132,6 +132,27 @@ test('allows bind mounts inside the app directory', () => {
   expectValid('services:\n  web:\n    image: nginx\n    volumes: ["./web:/usr/share/nginx/html", "data:/var/lib/data", "app-data:/srv"]\n');
 });
 
+// Compose reads a single-letter "X:" prefix as a Windows drive letter and never
+// splits `v:/data` into SOURCE:TARGET, so the daemon gets an anonymous volume
+// whose mount path is the literal `v:/data` and refuses to start it. The long
+// syntax starts fine. Both are verified against the shipped compose CLI; the
+// rejection must therefore name the real reason, not "a Windows path".
+test('rejects a single-letter volume spec as un-splittable, and accepts the long syntax', () => {
+  expectViolation(
+    'services:\n  web:\n    image: nginx\n    volumes: ["v:/data"]\nvolumes:\n  v:\n',
+    /single-letter "X:" prefix/
+  );
+  expectViolation(
+    'services:\n  web:\n    image: nginx\n    volumes: ["p:/data"]\nvolumes:\n  p:\n',
+    /single-letter "X:" prefix/
+  );
+  // Multi-letter names are split normally and remain allowed.
+  expectValid('services:\n  web:\n    image: nginx\n    volumes: ["db:/data"]\nvolumes:\n  db:\n');
+  expectValid('services:\n  web:\n    image: nginx\n    volumes: ["1:/data"]\nvolumes:\n  "1":\n');
+  // The documented workaround for a single-letter volume.
+  expectValid('services:\n  web:\n    image: nginx\n    volumes:\n      - type: volume\n        source: v\n        target: /data\nvolumes:\n  v:\n');
+});
+
 test('host paths are opt-in: LEAFDOCK_ALLOWED_BIND_PATHS', () => {
   const allowed = path.join(tmpRoot, 'media');
   fs.mkdirSync(path.join(allowed, 'photos'), { recursive: true });

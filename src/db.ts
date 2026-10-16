@@ -44,7 +44,7 @@ export async function initDb(dataDir: string): Promise<void> {
       db.run("ALTER TABLE apps RENAME TO apps_old");
       db.run(`CREATE TABLE apps (
         name TEXT PRIMARY KEY,
-        type TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('static', 'docker', 'docker-compose')),
         prefix TEXT NOT NULL UNIQUE,
         status TEXT NOT NULL DEFAULT 'running',
         config TEXT NOT NULL DEFAULT '{}',

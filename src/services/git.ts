@@ -107,7 +107,14 @@ export function resolveGitToken(url: string): string | undefined {
 // breaking them would harm legit repos. Absolute targets and chains like
 // a -> b -> /etc/passwd are both caught because the link itself is checked,
 // not the chain's final destination.
-function stripEscapingSymlinks(root: string): void {
+//
+// Exported because a git checkout is not the only way a symlink lands in an app
+// directory: a running app container has its own directory mounted read-write
+// at /app and can create one itself. Caddy's file_server follows symlinks out
+// of its root (verified: a link to /data/management.db is served with 200 to an
+// unauthenticated request), and the API's own readFiles/downloadAppZip follow
+// them too, so every path that materializes an app directory must strip them.
+export function stripEscapingSymlinks(root: string): void {
   const walk = (dir: string): void => {
     let entries: fs.Dirent[];
     try {

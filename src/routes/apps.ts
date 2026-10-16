@@ -328,6 +328,10 @@ export function handleError(res: Response, err: unknown): void {
       res.status(409).json({
         error: { code: 'app_already_exists', message: err.message },
       });
+    } else if (err.code === 'container_name_conflict') {
+      res.status(409).json({
+        error: { code: 'container_name_conflict', message: err.message },
+      });
     } else {
       res.status(400).json({
         error: { code: err.code, message: err.message },

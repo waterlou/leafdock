@@ -10,7 +10,7 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
-    "adm-zip": "^0.5.17",
+    "adm-zip": "^0.6.1",
     "dockerode": "^4.0.4",
     "express": "^4.21.0",
     "multer": "^2.1.1",

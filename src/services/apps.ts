@@ -4,9 +4,10 @@ import AdmZip from 'adm-zip';
 import * as db from '../db';
 import * as caddy from './caddy';
 import * as docker from './docker';
+import { parseMemLimitStrict, cpuSharesFromLimit } from './docker';
 import * as compose from './compose';
 import { inspectCompose } from './compose-validation';
-import { GitSource, validateGitSource, cloneRepo } from './git';
+import { GitSource, validateGitSource, cloneRepo, stripEscapingSymlinks } from './git';
 import { ValidationError, DockerError } from './errors';
 
 export { ValidationError, DockerError };
@@ -81,6 +82,20 @@ export interface AppOutput {
 
 const NAME_REGEX = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 
+// POSIX-ish env names. The value is passed to docker as one `NAME=value` argv
+// element, so '=' or a newline in the name would inject an extra variable.
+const ENV_NAME_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+// Every create path must reject an unknown type: it becomes the row's `type`,
+// which the landing page renders (now escaped) and db writes. The zip and git
+// endpoints previously took the client's string with only a cast, so a crafted
+// value reached the row unchecked.
+function validateType(type: unknown): asserts type is AppInput['type'] {
+  if (type !== 'static' && type !== 'docker' && type !== 'docker-compose') {
+    throw new ValidationError('"type" must be one of: static, docker, docker-compose.');
+  }
+}
+
 function validateName(name: string): void {
   if (!name || !NAME_REGEX.test(name)) {
     throw new ValidationError(
@@ -115,13 +130,15 @@ function containerWorkDir(name: string, folder: string): string {
 }
 
 // Index must be a bare filename: no leading '/', no path separators, no '..' traversal.
-// Only static apps serve an index file, so skip other types — a legacy docker/compose
-// row may carry an irrelevant top-level 'index' field that must not block updates.
+// Checked for EVERY type, not just static: mergeConfig spreads the patch, so a
+// docker/compose row can carry an `index` field, and extractTitle joins it onto
+// the app directory (rowToOutput and listApps both call it) — a traversal value
+// would make the API read an arbitrary host file as root.
 function validateStaticConfig(config: AppConfig, type: 'static' | 'docker' | 'docker-compose'): void {
-  if (type !== 'static') return;
+  if (!('index' in config) || config.index === undefined) return;
   const { index } = config as StaticAppConfig;
-  if (!index || index.startsWith('/') || /[\\/]/.test(index) || index === '..') {
-    throw new ValidationError(`Invalid index file: ${index}`);
+  if (typeof index !== 'string' || !index || index.startsWith('/') || /[\\/]/.test(index) || index === '..') {
+    throw new ValidationError(`Invalid index file: ${String(index)}`);
   }
 }
 
@@ -175,8 +192,83 @@ function mergeConfig(
   if (base.build_command && base.mem_limit === '128m') {
     base.mem_limit = '2g';
   }
+  // Validate the merged result, not just the patch: a stored config may predate
+  // these rules, and every value here reaches the docker daemon or Caddy.
+  if (type === 'docker') validateDockerConfig(base as DockerAppConfig);
+  if (type === 'docker-compose') validateComposeConfig(base as DockerComposeAppConfig);
   validateStaticConfig(base, type);
   return base;
+}
+
+// A service name becomes a URL segment (`/<app>/<service>`) in the Caddy route
+// and part of the container name, so it must be a plain slug. Unvalidated, a
+// name of `*` produces a Caddy path matcher `/<app>/*` that hijacks every
+// sibling path under the app's prefix (verified against the admin API), and
+// `..`/`/` produce nonsense routes. Same charset as an app name / folder
+// segment, so it can never be a wildcard, a traversal, or an empty segment.
+const SERVICE_NAME_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
+
+function validateDockerConfig(config: DockerAppConfig): void {
+  if (typeof config.image !== 'string' || config.image.trim() === '') {
+    throw new ValidationError('"image" must be a non-empty string.');
+  }
+  const port = config.port;
+  if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new ValidationError('"port" must be an integer between 1 and 65535.');
+  }
+  // cpu_limit is "cores" (docker shares are relative to 1024). Validate the
+  // value that actually reaches the daemon: a config that isn't a positive
+  // finite number yields NaN shares, and a huge one overflows to Infinity ->
+  // JSON null -> docker's default, i.e. no limit at all. Using the same
+  // arithmetic as deployment is what keeps the two from diverging.
+  const shares = cpuSharesFromLimit(typeof config.cpu_limit === 'string' ? config.cpu_limit : '');
+  if (!Number.isFinite(shares) || shares <= 0) {
+    throw new ValidationError('"cpu_limit" must be a positive number (cores), e.g. "0.5".');
+  }
+  // mem_limit must parse and be > 0 — "0"/"0m" means unlimited in docker, which
+  // is never what "set a memory limit" asked for. Note NaN <= 0 is false, so
+  // test for a finite positive number rather than negating the comparison.
+  const mem = typeof config.mem_limit === 'string' ? parseMemLimitStrict(config.mem_limit) : NaN;
+  if (!Number.isFinite(mem) || mem <= 0) {
+    throw new ValidationError('"mem_limit" must be a size like "128m" or "1g" (greater than zero).');
+  }
+  if (config.env === undefined || typeof config.env !== 'object' || config.env === null || Array.isArray(config.env)) {
+    throw new ValidationError('"env" must be a map of name to value.');
+  }
+  // Each entry is passed to docker as a `NAME=value` argv element, so a name
+  // containing '=' or a newline would inject an extra container variable.
+  for (const [key, value] of Object.entries(config.env)) {
+    if (!ENV_NAME_REGEX.test(key)) {
+      throw new ValidationError(`Invalid env variable name: ${JSON.stringify(key)}`);
+    }
+    if (typeof value !== 'string') {
+      throw new ValidationError(`"env.${key}" must be a string.`);
+    }
+    // docker receives one `NAME=value` argv element per entry; a newline in the
+    // value terminates that element and introduces a second, undeclared
+    // variable (verified against the daemon). NUL truncates it.
+    if (/[\n\r\0]/.test(value)) {
+      throw new ValidationError(`"env.${key}" must not contain newlines or NUL bytes.`);
+    }
+  }
+}
+
+function validateComposeConfig(config: DockerComposeAppConfig): void {
+  const services = config.services;
+  if (services === undefined || typeof services !== 'object' || services === null || Array.isArray(services)) {
+    throw new ValidationError('"services" must be a map of service name to { port }.');
+  }
+  for (const [name, svc] of Object.entries(services)) {
+    if (!SERVICE_NAME_REGEX.test(name)) {
+      throw new ValidationError(
+        `Invalid service name "${name}": must be lowercase letters, digits, hyphens or underscores (it is used as a URL path segment).`
+      );
+    }
+    const port = svc !== null && typeof svc === 'object' && 'port' in svc ? svc.port : undefined;
+    if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new ValidationError(`"services.${name}.port" must be an integer between 1 and 65535.`);
+    }
+  }
 }
 
 // Default routing mode is prefix-stripping; pass-through only when the app
@@ -302,6 +394,43 @@ function throwIfPrefixConflict(prefix: string, exceptName?: string): void {
   throw new ValidationError(`Prefix "${prefix}" conflicts with existing app at "${conflict.prefix}"`, 'prefix_conflict');
 }
 
+// Docker and compose containers share one flat name space:
+//   docker app  <n>          -> ld-app-<n>
+//   compose app <a> svc <s>  -> ld-<a>-<s>
+// so docker app `x` and compose app `app` (service `x`) both resolve to
+// `ld-app-x`. Creation force-removes any container with the matching name
+// (removeContainerIfExists), so the second app silently destroys the first
+// app's live container while its DB row still says "running". Reject the
+// collision up front rather than let two apps own one name.
+function containerNamesFor(type: AppInput['type'], name: string, config: AppConfig): string[] {
+  if (type === 'docker') return [`ld-app-${name}`];
+  if (type === 'docker-compose') {
+    return Object.keys((config as DockerComposeAppConfig).services ?? {}).map(s => `ld-${name}-${s}`);
+  }
+  return [];
+}
+
+function throwIfContainerNameConflict(
+  type: AppInput['type'],
+  name: string,
+  config: AppConfig,
+  exceptName?: string
+): void {
+  const wanted = new Set(containerNamesFor(type, name, config));
+  if (wanted.size === 0) return;
+  for (const row of db.listApps()) {
+    if (row.name === exceptName) continue;
+    const theirs = containerNamesFor(row.type, row.name, JSON.parse(row.config));
+    const clash = theirs.find(t => wanted.has(t));
+    if (clash) {
+      throw new ValidationError(
+        `App "${name}" would use container name "${clash}", already used by app "${row.name}" — rename one of them`,
+        'container_name_conflict'
+      );
+    }
+  }
+}
+
 // Reserved URL space: the management API (/api/*), the machine-readable
 // pointer (/llms.txt), and the root catch-all. App routes are inserted ahead
 // of the Caddyfile system routes, so an app claiming these would intercept the
@@ -333,7 +462,13 @@ function appDir(name: string, folder?: string): string {
 const MAX_ZIP_ENTRIES = 100_000;
 const MAX_ZIP_ENTRY_SIZE = 1024 * 1024 * 1024; // 1GB per file
 const MAX_ZIP_TOTAL_SIZE = 2 * 1024 * 1024 * 1024; // 2GB total
-
+// An entry whose declared uncompressed size is 0 while carrying compressed data
+// is a forged header, not a file: adm-zip's inflater only sets
+// `maxOutputLength` when the declared size is > 0, so such an entry inflates
+// with no cap at all. Verified: a 64KB archive declaring size 0 inflated a
+// 64MB buffer in this process; at multer's 100MB limit that is tens of GB of RAM
+// in the PID holding the docker socket. A genuinely empty file declares 0 for
+// its compressed size too, so it is unaffected.
 function validateZipEntries(zip: AdmZip): void {
   const entries = zip.getEntries();
   if (entries.length > MAX_ZIP_ENTRIES) {
@@ -342,6 +477,11 @@ function validateZipEntries(zip: AdmZip): void {
   let total = 0;
   for (const entry of entries) {
     const size = entry.header.size;
+    if (size === 0 && entry.header.compressedSize > 0) {
+      throw new ValidationError(
+        `Zip entry "${entry.entryName}" declares no uncompressed size but carries ${entry.header.compressedSize} compressed bytes — refusing to extract`
+      );
+    }
     if (size > MAX_ZIP_ENTRY_SIZE) {
       throw new ValidationError(`Zip entry too large: ${entry.entryName} (max 1GB per file)`);
     }
@@ -393,6 +533,13 @@ function readFiles(name: string, folder: string): AppFile[] {
       // and slow, and can blow the JSON string limit entirely.
       if (entry.isDirectory() && (entry.name === 'node_modules' || entry.name === '.next')) continue;
       const fullPath = path.join(currentDir, entry.name);
+      // Never follow a symlink: a link planted in the app directory (by a
+      // running app container, which has the dir mounted read-write, or by a
+      // crafted archive) would make this read an arbitrary host file — e.g.
+      // management.db — and hand it back in the API response. Creation paths
+      // strip escaping links, but reading is the last line of defence for links
+      // that already exist.
+      if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
         walk(fullPath);
       } else {
@@ -545,9 +692,7 @@ export function downloadAppZip(name: string): Buffer {
 export async function createApp(input: AppInput): Promise<AppOutput> {
   validateName(input.name);
 
-  if (input.type !== 'static' && input.type !== 'docker' && input.type !== 'docker-compose') {
-    throw new ValidationError('"type" must be one of: static, docker, docker-compose.');
-  }
+  validateType(input.type);
   if (!Array.isArray(input.files)) {
     throw new ValidationError('"files" must be an array of { path, content } objects.');
   }
@@ -576,9 +721,11 @@ export async function createApp(input: AppInput): Promise<AppOutput> {
 
   const now = new Date().toISOString();
   const config = mergeConfig(input.type, undefined, input.config);
+  throwIfContainerNameConflict(input.type, input.name, config);
 
   // Write files to disk
   writeFiles(input.name, folder, input.files);
+  stripEscapingSymlinks(appDir(input.name, folder));
 
   let containerId: string | null = null;
 
@@ -633,6 +780,7 @@ export async function createAppFromZip(
   icon?: string
 ): Promise<AppOutput> {
   validateName(name);
+  validateType(type);
 
   const iconNorm = icon !== undefined ? validateIcon(icon) : '';
   const folderNorm = validateFolder(folder ?? '');
@@ -654,9 +802,11 @@ export async function createAppFromZip(
   validateZipEntries(zip);
   zip.extractAllTo(dir, true);
   fs.rmSync(zipPath, { force: true });
+  stripEscapingSymlinks(dir);
 
   const now = new Date().toISOString();
   const config = mergeConfig(type, undefined, appConfig);
+  throwIfContainerNameConflict(type, name, config);
 
   let containerId: string | null = null;
 
@@ -701,7 +851,7 @@ export async function createAppFromZip(
   return rowToOutput(db.getApp(name)!);
 }
 
-export async function updateAppFromZip(
+async function updateAppFromZipLocked(
   name: string,
   zipPath: string,
   appConfig?: AppConfig,
@@ -712,6 +862,7 @@ export async function updateAppFromZip(
 
   const now = new Date().toISOString();
   const merged = mergeConfig(existing.type, existing.config, appConfig);
+  throwIfContainerNameConflict(existing.type, name, merged, name);
   const updates: Parameters<typeof db.updateApp>[1] = { updated_at: now, config: JSON.stringify(merged) };
   if (icon !== undefined) updates.icon = validateIcon(icon);
 
@@ -722,9 +873,15 @@ export async function updateAppFromZip(
     fs.mkdirSync(dir, { recursive: true });
 
     const zip = new AdmZip(zipPath);
+    // Same central-directory caps as create: extraction inflates every entry in
+    // memory, so an unchecked archive is a memory/disk DoS on the root process.
+    validateZipEntries(zip);
     zip.extractAllTo(dir, true);
     fs.rmSync(zipPath, { force: true });
   });
+  // The archive may carry symlink entries, and the previous version of this app
+  // may itself have left links behind.
+  stripEscapingSymlinks(dir);
 
   // Refresh Caddy route
   const prefix = existing.prefix;
@@ -774,6 +931,7 @@ export async function createAppFromGit(
   icon?: string
 ): Promise<AppOutput> {
   validateName(name);
+  validateType(type);
 
   const iconNorm = icon !== undefined ? validateIcon(icon) : '';
   const folderNorm = validateFolder(folder ?? '');
@@ -798,6 +956,7 @@ export async function createAppFromGit(
   const now = new Date().toISOString();
   const configMerged = mergeConfig(type, undefined, appConfig);
   configMerged.git = gitNorm;
+  throwIfContainerNameConflict(type, name, configMerged);
 
   let containerId: string | null = null;
 
@@ -842,7 +1001,7 @@ export async function createAppFromGit(
   return rowToOutput(db.getApp(name)!);
 }
 
-export async function updateAppFromGit(
+async function updateAppFromGitLocked(
   name: string,
   git: GitSource,
   appConfig?: AppConfig,
@@ -859,6 +1018,7 @@ export async function updateAppFromGit(
   const now = new Date().toISOString();
   const merged = mergeConfig(existing.type, existing.config, appConfig);
   merged.git = gitNorm;
+  throwIfContainerNameConflict(existing.type, name, merged, name);
   const updates: Parameters<typeof db.updateApp>[1] = { updated_at: now, config: JSON.stringify(merged) };
   if (icon !== undefined) updates.icon = validateIcon(icon);
 
@@ -1007,6 +1167,29 @@ async function withAppLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
 
 export async function moveApp(name: string, folder: string): Promise<AppOutput> {
   return updateApp(name, { folder });
+}
+
+// Both update entry points mutate the app directory and the container, so they
+// take the same per-app lock as updateApp/move/delete/stop/start. Without it a
+// concurrent delete could rmSync the directory mid-update (the update then
+// recreates the container of an app that no longer exists), or a concurrent
+// start could have its container removed.
+export async function updateAppFromZip(
+  name: string,
+  zipPath: string,
+  appConfig?: AppConfig,
+  icon?: string
+): Promise<AppOutput> {
+  return withAppLock(name, () => updateAppFromZipLocked(name, zipPath, appConfig, icon));
+}
+
+export async function updateAppFromGit(
+  name: string,
+  git: unknown,
+  appConfig?: AppConfig,
+  icon?: string
+): Promise<AppOutput> {
+  return withAppLock(name, () => updateAppFromGitLocked(name, validateGitSource(git), appConfig, icon));
 }
 
 export async function updateApp(name: string, input: Partial<AppInput>): Promise<AppOutput> {
@@ -1428,7 +1611,18 @@ export async function syncRoutes(): Promise<void> {
 
   const rows = db.listApps();
   for (const row of rows) {
-    const config = mergeConfig(row.type, row.config);
+    // mergeConfig validates, so a legacy row whose stored config predates a
+    // rule (an old compose service name, a pre-validation cpu_limit, ...) throws
+    // here. Inside the try it costs that one app its route; outside it aborts
+    // this whole pass, and syncRoutes rejects main(), which exits the process —
+    // a boot-time outage from one bad row that requires reading logs to find.
+    let config: AppConfig;
+    try {
+      config = mergeConfig(row.type, row.config);
+    } catch (err) {
+      console.error(`Skipping route for "${row.name}": stored config is invalid:`, err);
+      continue;
+    }
     try {
       if (row.type === 'docker') {
         const dockerConfig = config as DockerAppConfig;

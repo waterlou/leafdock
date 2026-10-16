@@ -11,9 +11,11 @@ export class ValidationError extends Error {
 
 // Failures from the docker daemon / compose CLI. Distinct from internal_error
 // so clients can tell "the infra broke" apart from "the server has a bug".
+// `options` forwards Error's `cause`, which is where dockerode keeps the
+// daemon's status code and response body.
 export class DockerError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
     this.name = 'DockerError';
   }
 }
