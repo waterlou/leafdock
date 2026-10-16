@@ -150,7 +150,7 @@ POST /apps/upload
 
 Create a new app by uploading a zip file. The zip is extracted to the app's directory. Use this for apps with binary files (images, fonts, videos) to avoid base64 encoding.
 
-Limits: the uploaded archive must be a `.zip` file of at most 100 MB (compressed). Extraction is guarded against zip bombs: at most 100,000 entries, 1 GB per entry (uncompressed), 2 GB total (uncompressed) — larger archives are rejected with `validation_error`.
+Limits: the uploaded archive must be a `.zip` file of at most 100 MB (compressed). Extraction is guarded against zip bombs: at most 100,000 entries, 1 GB per entry (uncompressed), 2 GB total (uncompressed) — larger archives are rejected with `validation_error`. An entry that declares no uncompressed size while carrying compressed data is also rejected: `adm-zip` applies its own output cap only when the declared size is greater than zero, so such a header would otherwise inflate without a bound. Symlinks are stripped from every extracted app directory (Caddy's file server follows them out of the app root, and the API's own file reads would too).
 
 **Request:** `multipart/form-data`
 

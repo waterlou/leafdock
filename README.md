@@ -177,7 +177,7 @@ HTML/CSS/JS files served directly by Caddy. Best for frontend apps.
 
 ### Docker
 
-A container built from your source files. The files are mounted at `/app` and the container runs on the internal Docker network. Best for full-stack apps.
+A container built from your source files. The app's own directory is mounted at `/app` (never the whole data store) and the container runs on the internal Docker network. Best for full-stack apps.
 
 | Config option | Default | Description |
 |---------------|---------|-------------|
@@ -209,6 +209,8 @@ Two opt-ins exist for the cases where an app genuinely needs more — both **off
 | `LEAFDOCK_ALLOWED_HOST_PORTS` | *(empty)* | Host ports a service may publish (`8080`, `8080,9000-9010`, or `any`). Empty means no fixed host port may be claimed — apps are reached through Caddy. Target-only specs (`ports: ["3000"]`) get an ephemeral port and stay allowed. |
 
 `GET /api/v1/apps/:name/compose-check` reports the same violations for an already-stored app without deploying it.
+
+One `volumes` rule is compose's, not the policy's: a **single-letter** named volume in short syntax (`v:/data`) does not work — compose reads the `X:` prefix as a Windows drive letter and never splits it, so the daemon gets a mount path of the literal `v:/data` and refuses to start the container. Use the long syntax (`- type: volume` / `source: v` / `target: /data`) or a name of two or more characters (`db:/data`). Leafdock rejects the short form up front with that explanation instead of letting the deploy fail at the daemon.
 
 The gate removes the direct host escape routes from compose files; it is **not** a sandbox. `image:` is still uploader-chosen and pulled from the internet, and `docker`-type apps run uploaded code by design. See the [Security](specs.md#security) section of `specs.md` for what is and isn't covered, including the currently-open cross-app mount.
 

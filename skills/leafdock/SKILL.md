@@ -23,11 +23,11 @@ Config: `{ index: "index.html", spa: false }`
 - `spa: true` — all unmatched paths serve `index.html` (for React Router, Vue Router, etc.)
 
 ### docker
-A container built from source files. Files are mounted at `/app`, the container runs on the internal Docker network. Use for full-stack apps with a backend.
+A container built from source files. The app's own directory is mounted at `/app` (not the shared data store), the container runs on the internal Docker network. Use for full-stack apps with a backend.
 
 Config: `{ image: "node:20-alpine", port: 3000, env: {}, command: "npm install && node server.js", cpu_limit: "0.5", mem_limit: "128m" }`
 
-The container has no user-supplied mounts or host options: it gets exactly one mount (`/app`, the app's storage) and joins the `leafdock_default` network. Everything the app persists must live under `/app`.
+The container has no user-supplied mounts or host options: it gets exactly one mount (`/app`, the app's own directory) and joins the `leafdock_default` network. Everything the app persists must live under `/app`.
 
 **Apps with a native base path** (e.g. Next.js built with `BASE_PATH=/my-app`, deployed the same way as a direct hosting setup): set `strip_prefix: false` in the config and build the app with its `BASE_PATH` set. The prefix then passes through to the container untouched — the app serves `/my-app/...` itself, exactly like `https://app.example.com/my-app`. Without `strip_prefix: false` the prefix is stripped, so the app must serve at its root (no base path).
 
@@ -48,6 +48,7 @@ Config: `{ compose_file?: "docker-compose.yml", services: { web: { port: 3000 },
   - unknown keys are rejected rather than ignored, so stick to documented compose keys; `security_opt` accepts only `no-new-privileges` and a seccomp profile from the app directory.
 - The compose process inherits only a small whitelist of environment variables, so **`${VAR}` in a compose file cannot read leafdock's own env** (no `${MANAGEMENT_API_KEY}`, no `${GIT_TOKEN}`). Put values the app needs in its own `.env` file in the app directory or inline under `environment:`.
 - `GET /apps/:name/compose-check` audits an already-stored compose file without deploying it — useful after a policy change or to explain a rejection.
+- **A single-letter named volume in short syntax (`v:/data`) does not work** — compose reads the `X:` prefix as a Windows drive letter and the container fails to start with `mount path must be absolute`. Use a name of two or more characters (`db:/data`) or the long syntax (`- type: volume` / `source: v` / `target: /data`).
 
 Example payload:
 ```json

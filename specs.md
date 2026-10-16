@@ -127,6 +127,23 @@ Two operator opt-ins exist, both **off by default** (see `.env.example`):
 | `LEAFDOCK_ALLOWED_BIND_PATHS` | Extra absolute host paths bind mounts may use. `/`, `/proc`, `/sys`, `/dev`, `/etc` and the docker socket are refused even when listed. |
 | `LEAFDOCK_ALLOWED_HOST_PORTS` | Host ports a service may publish (`8080`, `9000-9010`, `any`). Target-only specs get an ephemeral port and stay allowed. |
 
+### Container isolation
+
+Each app container mounts **only its own app directory** at `/app` (a named-volume
+`Subpath`, or the equivalent host path for a bind install), so it cannot read
+`management.db`, another app's files, or its uploaded config. Verified on a real
+daemon: from inside an app container, `/app/management.db` and sibling app
+directories do not exist.
+
+Because that mount is read-write, an app can create files inside its own
+directory — including symlinks. Caddy's `file_server` **follows symlinks out of
+its root** (verified: a link to another path is served with `200` to an
+unauthenticated request), and the API's own file reads follow them too, so every
+path that materializes an app directory (JSON/zip/git create, zip update) strips
+symlinks that resolve outside it, and the file-reading walk skips symlinks
+entirely. Only static apps are served by `file_server`; docker/compose apps are
+reached through the reverse proxy.
+
 ### What this policy does not cover
 
 The gate removes the direct host escape routes from compose files; it is not a
@@ -136,9 +153,10 @@ sandbox.
   is not stopped by validation.
 - `docker`-type apps execute uploaded code by design, so they are equally
   trusted.
-- Every app container mounts the whole `/data` store at `/app`, so an app can
-  read `management.db` and other apps' files. Scoping each app to its own
-  directory is open work, as is daemon-side `userns-remap`.
+- Compose apps still publish services on the shared `leafdock_default` network
+  (and may join a declared network), so containers can reach each other.
+- Daemon-side `userns-remap` is not configured: a container that escapes its
+  own namespaces is still root on the host.
 
 ## Limitations
 
